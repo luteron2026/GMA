@@ -3,6 +3,9 @@
 // storage is blocked (for example in some private-browsing modes); it just won't persist.
 
 const KEY = 'gma-save-v1';
+// Bump when the map layout changes so a saved position from an older map isn't reused.
+// Version 2: real campus layout from OpenStreetMap.
+const MAP_VERSION = 2;
 
 const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 
@@ -10,7 +13,7 @@ function fresh() {
   return {
     credits: 0, completed: [], deeds: 0, banished: 0,
     // World state (null = start at the default spawn)
-    pos: null, heading: Math.PI, vehicle: null,
+    map: MAP_VERSION, pos: null, heading: Math.PI, vehicle: null,
     time: 8 * 3600, heat: 0, joy: 100,
     playTime: 0, savedAt: 0,
   };
@@ -37,9 +40,12 @@ export function loadSave() {
     s.completed = Array.isArray(d.completed) ? d.completed.filter((x) => typeof x === 'string') : [];
     s.deeds = Math.max(0, num(d.deeds, 0) | 0);
     s.banished = Math.max(0, num(d.banished, 0) | 0);
-    if (Array.isArray(d.pos) && d.pos.length === 2 && d.pos.every((v) => Number.isFinite(v))) s.pos = d.pos;
-    s.heading = num(d.heading, Math.PI);
-    if (d.vehicle && typeof d.vehicle.type === 'string') s.vehicle = { type: d.vehicle.type };
+    // Where you were standing only makes sense on the same map; credits and missions carry over
+    if (d.map === MAP_VERSION) {
+      if (Array.isArray(d.pos) && d.pos.length === 2 && d.pos.every((v) => Number.isFinite(v))) s.pos = d.pos;
+      s.heading = num(d.heading, Math.PI);
+      if (d.vehicle && typeof d.vehicle.type === 'string') s.vehicle = { type: d.vehicle.type };
+    }
     s.time = num(d.time, 8 * 3600);
     s.heat = Math.min(5.99, Math.max(0, num(d.heat, 0)));
     s.joy = Math.min(100, Math.max(10, num(d.joy, 100)));

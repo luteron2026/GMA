@@ -9,7 +9,7 @@ export const NEEDS = [
   { ask: 'Hold the Grill door?', thanks: 'Thanks for holding the door at the Mustang Grill!' },
   { ask: 'Help with my laundry?', thanks: 'Three flights of stairs. Truly servant leadership.' },
   { ask: 'Got notes on Hebrews?', thanks: 'Iron sharpens iron! (So do your highlighters.)' },
-  { ask: 'Where do I sit in chapel?', thanks: 'Found my seat! Right behind the guy who claps off-beat.' },
+  { ask: 'Where do I sit in chapel?', thanks: 'Found my seat in Bross Court! Right behind the guy who claps off-beat.' },
   { ask: 'Locked out of my dorm!', thanks: 'You called the RA for me. Blessed are the key-holders.' },
   { ask: 'Hear my ring-by-spring plan?', thanks: 'You listened to all 14 steps. That is real love.' },
   { ask: 'Share a Grill swipe?', thanks: 'Free tater tots! Generosity is a spiritual gift.' },
@@ -20,9 +20,10 @@ export const NEEDS = [
 ];
 
 const RIDE_DESTS = [
-  ['library', 'Powell Library'], ['chapelDoor', 'MacArthur Chapel'], ['grill', 'the Mustang Grill'],
-  ['reece', 'the Reece Center'], ['stadium', 'Herwaldt Stadium'], ['canyonHomes', 'Canyon Homes'],
-  ['waldock', 'Waldock Hall'], ['hotchkiss', 'Hotchkiss Hall'], ['gym', 'the Gym'], ['westLot', 'the West Lot'],
+  ['library', 'Powell Library'], ['chapelDoor', 'the MacArthur Center'], ['grill', 'the Mustang Grill'],
+  ['reece', 'the Reese Center'], ['stadium', 'Lou Herwaldt Stadium'], ['placeritos', 'Placeritos Blvd'],
+  ['waldock', 'Waldock Hall'], ['hotchkiss', 'Hotchkiss Hall'], ['gym', 'the Kinesiology Center'], ['westLot', 'the West Lot'],
+  ['biblical', 'the Biblical Studies Center'], ['music', 'the School of Music'], ['smith', 'C.W. Smith Hall'], ['church', 'Placerita Bible Church'],
 ];
 
 export class NPC {
