@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1f3a6e">
+  <meta name="description" content="Grand Mustang Auto: a free, fan-made parody open-world browser game set in Placerita Canyon. Do good deeds, earn Divine Approval, and outrun the imps.">
+  <title>Grand Mustang Auto</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐎</text></svg>">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.min.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div id="hud-tl">
+      <div class="joy"><span class="joy-label">JOY</span><div class="joy-bar"><div id="joy-fill"></div></div></div>
+      <div id="objective"></div>
+      <div id="timer"></div>
+    </div>
+    <div id="hud-tr">
+      <div id="clock">8:00 AM</div>
+      <div class="approval-label">DIVINE APPROVAL</div>
+      <div id="stars"></div>
+      <div class="credits"><span id="credits">0</span> <small>Chapel Credits</small></div>
+      <div id="vehicle"></div>
+    </div>
+    <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="toasts"></div>
+    <div id="prompt"></div>
+    <div id="bigmsg"></div>
+    <div id="hurt"></div>
+    <button id="btn-pause" class="corner-btn" aria-label="Pause">⏸</button>
+    <button id="btn-mute" class="corner-btn" aria-label="Toggle sound">🔊</button>
+  </div>
+
+  <div id="touch">
+    <div id="joystick"><div class="knob"></div></div>
+    <div id="buttons">
+      <button data-action="throw" class="tbtn big" aria-label="Throw Bible or horn">📖</button>
+      <button data-action="action" class="tbtn" aria-label="Interact">✋</button>
+      <button data-action="sprint" class="tbtn" aria-label="Sprint or handbrake">⚡</button>
+      <button data-action="camera" class="tbtn small" aria-label="Camera">🎥</button>
+    </div>
+  </div>
+
+  <div id="title" class="overlay show">
+    <div class="title-card">
+      <div class="logo">
+        <div class="logo-top">GRAND</div>
+        <div class="logo-main">MUSTANG</div>
+        <div class="logo-bottom">AUTO</div>
+      </div>
+      <p class="tagline">An open-world game of <b>tactical kindness</b> in Placerita Canyon.</p>
+      <p class="tagline small">Do good deeds. Earn Divine Approval. Make it to chapel by 9:10.</p>
+      <button id="play" class="btn primary">PLAY</button>
+      <div id="loading">Loading campus…</div>
+      <details class="controls">
+        <summary>How to play</summary>
+        <div class="controls-grid">
+          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</div><div>Walk &amp; drive</div>
+          <div><kbd>Space</kbd> / click</div><div>Throw a Bible (on foot) · Hallelujah Horn (driving)</div>
+          <div><kbd>E</kbd></div><div>Talk, help, borrow a car, get out, kick stunned imps</div>
+          <div><kbd>Shift</kbd></div><div>Sprint · handbrake</div>
+          <div><kbd>C</kbd> · <kbd>M</kbd> · <kbd>Esc</kbd></div><div>Camera · sound · pause</div>
+        </div>
+        <p>On phones: left thumb steers, buttons on the right do the rest. Landscape works best.</p>
+        <p>Help students with a <b>!</b> bubble to earn <b>Divine Approval</b> ★. The more good you do, the more imps show up. Yellow markers are missions. Finish five to unlock the final showdown on Prayer Hill.</p>
+      </details>
+      <p class="disclaimer">A free, fan-made parody. Not affiliated with or endorsed by The Master's University or The Babylon Bee. All characters are fictional.</p>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay">
+    <div class="panel">
+      <h2>Paused</h2>
+      <button class="btn primary" id="resume">Resume</button>
+      <button class="btn" id="abandon">Abandon mission</button>
+      <button class="btn" id="reset">Reset progress</button>
+      <p class="small">Progress saves in this browser.</p>
+    </div>
+  </div>
+
+  <div id="faint" class="overlay dim">
+    <div class="panel">
+      <h2>FAINTED</h2>
+      <p id="faint-text"></p>
+      <p id="faint-sub" class="small"></p>
+    </div>
+  </div>
+
+  <div id="ending" class="overlay">
+    <div class="panel wide">
+      <div class="logo small-logo"><div class="logo-main">VICTORY</div></div>
+      <p>You resisted The Tempter, served your neighbors, and (mostly) made it to chapel on time.</p>
+      <p id="end-stats"></p>
+      <p class="small">Thanks for playing Grand Mustang Auto. Go Mustangs!</p>
+      <button class="btn primary" id="keep-playing">Keep exploring</button>
+    </div>
+  </div>
+
+  <div id="rotate-hint">Turn your phone sideways for the best view ↻</div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
