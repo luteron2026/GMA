@@ -1,8 +1,9 @@
 import { makeBeacon, makeItem, makePerson, randomLook, makeBubble, setOutfit, animatePerson } from './models.js';
 import { Boss } from './enemies.js';
 
-// Campus places are [x, y-north]; convert to world [x, z]
-const P = (x, y) => [x, -y];
+// Mission spots come from CAMPUS.places (real campus locations, in world [x, z]).
+// Offset a world spot by a few meters
+const off = ([x, z], dx, dz) => [x + dx, z + dz];
 
 const MISSIONS = [
   {
@@ -16,7 +17,7 @@ const MISSIONS = [
       m.timer = 80;
       m.clock = 9 * 3600 + 8 * 60 + 40;
       m.target = m.waypoint(m.place('chapelDoor'), 0xffd23f, 4);
-      m.objective('Get to <b>MacArthur Chapel</b> before 9:10!');
+      m.objective('Get to chapel at the <b>MacArthur Center</b> before 9:10!');
     },
     update(m) {
       m.game.clockOverride = m.clock + m.elapsed;
@@ -36,7 +37,7 @@ const MISSIONS = [
     reward: 50,
     blurb: 'Hotchkiss needs pies from the Mustang Grill for Apple Pie Night in the Hotchyard. Drive gently.',
     begin(m) {
-      m.cart = m.spawnVehicle('cart', P(207, -62), 0);
+      m.cart = m.spawnVehicle('cart', off(m.place('hotchkiss'), 4, 3), 0);
       m.stage = 0;
       m.pies = 0;
       m.target = m.waypoint(m.place('grill'), 0xffd23f, 4);
@@ -78,18 +79,18 @@ const MISSIONS = [
     reward: 200,
     blurb: 'It is Classy Off Campus day and you are wearing gym shorts. Find a tie, a blazer, and dress shoes, then get to class.',
     begin(m) {
-      m.timer = 150;
+      m.timer = 220;
       m.left = 3;
-      m.pickup(P(-74, 42), 'tie', () => { setOutfit(m.game.player.mesh, { tie: true }); m.toast('Tie acquired. Windsor knot... ish.'); });
-      m.pickup(P(-212, -10), 'blazer', () => { setOutfit(m.game.player.mesh, { shirt: 0x1b2a4a }); m.toast('Blazer acquired. Instantly 40% more theological.'); });
-      m.pickup(P(278, 224), 'shoes', () => m.toast('Dress shoes! Found them at Canyon Homes. Do not ask.'));
+      m.pickup(m.place('business'), 'tie', () => { setOutfit(m.game.player.mesh, { tie: true }); m.toast('Tie acquired at the Business Center. Windsor knot... ish.'); });
+      m.pickup(m.place('education'), 'blazer', () => { setOutfit(m.game.player.mesh, { shirt: 0x1b2a4a }); m.toast('Blazer acquired. Instantly 40% more theological.'); });
+      m.pickup(m.place('placeritos'), 'shoes', () => m.toast('Dress shoes! Found them on Placeritos Blvd. Do not ask.'));
       m.objective('Collect a <b>tie</b>, a <b>blazer</b>, and <b>dress shoes</b>.');
     },
     update(m) {
       if (m.stage !== 1 && m.pickupsLeft() === 0) {
         m.stage = 1;
         m.target = m.waypoint(m.place('reece'), 0xffd23f, 4);
-        m.objective('Looking sharp. Get to class at the <b>Reece Center</b>!');
+        m.objective('Looking sharp. Get to class at the <b>Reese Center</b>!');
       }
       if (m.stage === 1 && m.near(m.target, 5)) m.win('Classy Off Campus achieved. You look like a youth pastor at a wedding.');
     },
@@ -105,9 +106,9 @@ const MISSIONS = [
     blurb: 'Three commuters are stranded and chapel is starting soon. Borrow a car and round them up.',
     begin(m) {
       m.timer = 200;
-      m.spawnVehicle('sedan', P(95, -142), Math.PI);
+      m.spawnVehicle('sedan', m.place('eastLot'), Math.PI);
       m.riders = 0;
-      const spots = [P(-150, -134), P(268, 210), P(-232, 128)];
+      const spots = [m.place('westLot'), m.place('northLot'), m.place('smithLot')];
       for (const s of spots) m.rider(s);
       m.objective('Pick up <b>3 commuters</b> (must be in a vehicle). Riders: 0/3');
     },
@@ -130,7 +131,7 @@ const MISSIONS = [
       if (m.riders < 3) m.objective(`Pick up <b>3 commuters</b> (must be in a vehicle). Riders: ${m.riders}/3`);
       else if (!m.target) {
         m.target = m.waypoint(m.place('chapelDoor'), 0xffd23f, 5);
-        m.objective('Everyone is in! Drive to <b>MacArthur Chapel</b>.');
+        m.objective('Everyone is in! Drive to chapel at the <b>MacArthur Center</b>.');
       }
       if (m.target && m.near(m.target, 8)) m.win('Everyone made it to chapel! Carpooling: good for the planet, great for your attendance record.');
       // Animate waiting riders
@@ -148,12 +149,12 @@ const MISSIONS = [
     reward: 200,
     blurb: 'Dixon is hosting Gratitouille: like Thanksgiving, but Italian, and earlier. Gather ingredients before dinner.',
     begin(m) {
-      m.timer = 240;
-      m.pickup(P(150, 120), 'tomato');
-      m.pickup(P(-158, 40), 'basil');
-      m.pickup(P(-262, 60), 'pasta');
-      m.pickup(P(40, 176), 'cheese');
-      m.pickup(P(132, -140), 'garlic');
+      m.timer = 270;
+      m.pickup(m.place('northLawn'), 'tomato');
+      m.pickup(off(m.place('church'), 0, 6), 'basil');
+      m.pickup(m.place('communication'), 'pasta');
+      m.pickup(off(m.place('grill'), -6, 3), 'cheese');
+      m.pickup(m.place('intramural'), 'garlic');
       m.objective('Gather <b>5 ingredients</b> around campus: 0/5');
     },
     update(m) {
@@ -175,7 +176,7 @@ const MISSIONS = [
     start: 'stadium',
     reward: 250,
     noAmbient: true,
-    blurb: 'Imps are haunting Herwaldt Stadium before the big game. Throw Bibles to stun them, then hit them again or kick them.',
+    blurb: 'Imps are haunting Lou Herwaldt Stadium before the big game. Throw Bibles to stun them, then hit them again or kick them.',
     begin(m) {
       m.game.clearImps(true);
       m.total = 12; m.spawned = 0; m.killed = 0;
@@ -188,8 +189,8 @@ const MISSIONS = [
         m.game.spawnImpsAround(c[0], c[1], 1, 22, 'stadium');
         m.spawned++;
       }
-      m.objective(`Banish the imps at <b>Herwaldt Stadium</b>: ${m.killed}/${m.total}`);
-      if (m.killed >= m.total) m.win('Herwaldt Stadium is cleansed. Go Mustangs!');
+      m.objective(`Banish the imps at <b>Lou Herwaldt Stadium</b>: ${m.killed}/${m.total}`);
+      if (m.killed >= m.total) m.win('Reese Field is cleansed. Go Mustangs!');
     },
     onImpBanished(m, imp) { if (imp.tag === 'stadium') m.killed++; },
     cleanup(m) { m.game.clearImps(true); },
@@ -200,11 +201,11 @@ const MISSIONS = [
     letter: 'L',
     start: 'library',
     reward: 180,
-    blurb: 'Five students are blasting worship music outside Powell Library during finals. Catch each one and kindly shush them.',
+    blurb: 'Five students are blasting worship music on the King Hall lawn during finals, and Powell Library can hear every word. Catch each one and kindly shush them.',
     begin(m) {
       m.timer = 120;
       m.loud = [];
-      const c = P(0, 20);
+      const c = m.place('quad');
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2;
         const npc = m.game.spawnMissionNPC(c[0] + Math.cos(a) * 30, c[1] + Math.sin(a) * 30);
@@ -220,7 +221,7 @@ const MISSIONS = [
             let tx, tz, sp;
             if (d < 12) { tx = n.x + dx; tz = n.z + dz; sp = 6.2; }
             else { n.wt = (n.wt || 0) - dt; if (!n.wp || n.wt <= 0) { n.wp = [c[0] + (Math.random() - 0.5) * 120, c[1] + (Math.random() - 0.5) * 100]; n.wt = 3; } tx = n.wp[0]; tz = n.wp[1]; sp = 2.5; }
-            // Stay around the quad
+            // Stay around the King Hall lawn
             const cx = n.x - c[0], cz = n.z - c[1], cd = Math.hypot(cx, cz);
             if (cd > 70) { tx = c[0]; tz = c[1]; }
             n.moveToward(tx, tz, sp, dt);

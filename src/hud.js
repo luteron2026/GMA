@@ -17,6 +17,8 @@ export class HUD {
     this.vehEl = $('vehicle');
     this.clockEl = $('clock');
     this.hurtEl = $('hurt');
+    this.streetEl = $('street');
+    this.lastStreet = null;
     this.mini = $('minimap');
     this.mctx = this.mini.getContext('2d');
     this.lastStars = -1;
@@ -43,24 +45,24 @@ export class HUD {
       pts.forEach(([x, z], i) => (i ? ctx.lineTo(tx(x), tz(z)) : ctx.moveTo(tx(x), tz(z))));
       ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
     };
-    const colors = { quad: '#7dbb52', field: '#5ea844', track: '#b9614a', diamond: '#c49a66', dirt: '#c4a676', wash: '#ddd0aa', grass: '#8fb85e' };
-    for (const l of w.data.lawns) {
-      if (l.circle) {
-        ctx.beginPath(); ctx.arc(tx(l.circle[0]), tz(-l.circle[1]), l.circle[2] * scale, 0, Math.PI * 2);
-        ctx.fillStyle = colors[l.kind]; ctx.fill();
-      } else poly(l.poly.map(([x, y]) => [x, -y]), colors[l.kind] || '#8fb85e');
-    }
-    for (const l of w.lots) poly(l.wpts, '#6b6e74');
+    const colors = { campus: '#9fbf63', grass: '#8fb85e', field: '#6aae4c', turf: '#5ea844', pitch: '#55a844', court: '#b0584a', sand: '#e6d6a4' };
+    for (const l of w.data.lawns) poly(l.poly.map(([x, y]) => [x, -y]), colors[l.kind] || '#8fb85e');
+    poly(w.data.diamond.dirt.map(([x, y]) => [x, -y]), '#c4784e');
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    for (const r of w.roads) {
+    const line = (pts, color, width) => {
       ctx.beginPath();
-      r.wpts.forEach(([x, z], i) => (i ? ctx.lineTo(tx(x), tz(z)) : ctx.moveTo(tx(x), tz(z))));
-      if (r.loop) ctx.closePath();
-      ctx.strokeStyle = r.dirt ? '#b49562' : '#3d4046';
-      ctx.lineWidth = r.width * scale;
-      ctx.stroke();
+      pts.forEach(([x, z], i) => (i ? ctx.lineTo(tx(x), tz(z)) : ctx.moveTo(tx(x), tz(z))));
+      ctx.strokeStyle = color; ctx.lineWidth = width * scale; ctx.stroke();
+    };
+    for (const wa of w.data.washes) line(wa.pts.map(([x, y]) => [x, -y]), '#ddd0aa', wa.width);
+    for (const l of w.lots) poly(l.wpts, '#6b6e74');
+    const roadColor = { street: '#3d4046', service: '#4d5056', aisle: '#5a5d63', driveway: '#62656a', path: '#d6cfbf', trail: '#b49562' };
+    for (const kind of ['trail', 'path', 'driveway', 'aisle', 'service', 'street']) {
+      for (const r of w.roads) if (r.kind === kind) line(r.wpts, roadColor[kind], kind === 'trail' || kind === 'path' ? Math.max(2, r.width) : r.width);
     }
-    for (const bd of w.buildings) poly(bd.wpts, bd.id === 'chapel' ? '#ffffff' : bd.dorm ? '#e9c98a' : '#d9cdb5');
+    const [hx, hz] = w.places.hill;
+    ctx.beginPath(); ctx.arc(tx(hx), tz(hz), 34 * scale, 0, Math.PI * 2); ctx.fillStyle = '#c4a676'; ctx.fill();
+    for (const bd of w.buildings) poly(bd.wpts, bd.id === 'chapel' ? '#ffffff' : bd.dorm ? '#e9c98a' : bd.kind === 'house' ? '#b8b2a6' : '#e2d3b5');
     this.mapImg = c;
     this.mapScale = scale;
     this.mapOrigin = [b.minX - 40, b.minZ - 40];
@@ -150,6 +152,15 @@ export class HUD {
     const v = g.player.vehicle;
     this.vehEl.textContent = v ? `${v.name} · ${Math.round(Math.abs(v.speed) * 2.237)} mph` : '';
     this.clockEl.textContent = g.clockText();
+    // Street name (or area) under the player, GTA style
+    const street = g.world.streetAt(g.player.x, g.player.z) || (g.world.inCampus(g.player.x, g.player.z) ? "The Master's University" : 'Placerita Canyon');
+    if (street !== this.lastStreet) {
+      this.lastStreet = street;
+      this.streetEl.textContent = street;
+      this.streetEl.classList.remove('fresh');
+      void this.streetEl.offsetWidth;
+      this.streetEl.classList.add('fresh');
+    }
     this.drawMinimap();
   }
 

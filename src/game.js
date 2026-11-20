@@ -8,10 +8,9 @@ import { Vehicle, vehicleContacts } from './vehicles.js';
 import { NPC } from './npcs.js';
 import { Imp, Projectile } from './enemies.js';
 import { Missions } from './missions.js';
-import { loadSave, writeSave, clearSave } from './save.js';
-import { clamp, lerp } from './physics.js';
-
-const P = (x, y) => [x, -y];
+import { loadSave, writeSave, clearSave, hasProgress } from './save.js';
+import { VEHICLE_TYPES } from './models.js';
+import { clamp, lerp, mulberry32 } from './physics.js';
 
 const BORROW_LINES = [
   'You shared Romans 12:13 ("practice hospitality"). The driver insists you borrow the car.',
@@ -94,13 +93,21 @@ export class Game {
     this.missions = new Missions(this);
     this.missions.init();
     this.populate();
+    this.started = false;
+    this.autosaveT = 0;
+    this.restoreState();
 
-    this.camPos = new THREE.Vector3(sp[0], 30, sp[1] + 40);
-    this.camLook = new THREE.Vector3(sp[0], 0, sp[1]);
+    const pp = this.player;
+    this.camPos = new THREE.Vector3(pp.x - Math.sin(pp.heading) * 8, 30, pp.z - Math.cos(pp.heading) * 8);
+    this.camLook = new THREE.Vector3(pp.x, 0, pp.z);
     this.camera.position.copy(this.camPos);
 
     this.input.bindCanvas(canvas);
     addEventListener('resize', () => this.resize());
+    // Save whenever the player leaves: closing the tab, switching apps, or navigating away
+    addEventListener('pagehide', () => this.persist());
+    addEventListener('beforeunload', () => this.persist());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.persist(); });
     this.resize();
     this.clock = new THREE.Clock();
     this.t = 0;
@@ -111,34 +118,48 @@ export class Game {
 
   populate() {
     const w = this.world;
-    // Parked vehicles
-    const parked = [
-      ['sedan', P(-170, -140), 0], ['sedan', P(-158, -140), 0], ['truck', P(-134, -154), Math.PI], ['sedan', P(-122, -140), 0],
-      ['sedan', P(80, -140), 0], ['van', P(98, -154), Math.PI], ['sedan', P(126, -140), 0], ['sedan', P(140, -154), Math.PI],
-      ['cart', P(18, 74), Math.PI / 2], ['cart', P(212, 8), 0], ['deanCart', P(-40, -118), Math.PI / 2],
-      ['cart', P(-90, 178), Math.PI / 2], ['truck', P(-150, 178), 0], ['sedan', P(-212, 186), Math.PI / 2],
-      ['sedan', P(-190, 196), -Math.PI / 2], ['cart', P(-248, -60), 0], ['sedan', P(290, 228), Math.PI / 2],
-    ];
-    for (const [t, pos, h] of parked) this.spawnVehicle(t, pos[0], pos[1], h);
-    // Traffic
-    const loop = w.lanes.find((l) => l.loop);
-    const nLoop = this.lowSpec ? 4 : 6;
-    for (let i = 0; i < nLoop; i++) {
-      const v = this.spawnVehicle(['sedan', 'cart', 'sedan', 'truck', 'van', 'sedan'][i % 6], 0, 0, 0);
-      v.setAI(loop, Math.floor((i / nLoop) * loop.pts.length));
+    const rng = mulberry32(2024);
+    // Parked cars in real parking stalls (nose-in)
+    const stalls = w.data.stalls;
+    const nParked = Math.min(stalls.length, this.lowSpec ? 22 : 36);
+    const used = new Set();
+    while (used.size < nParked) {
+      const k = Math.floor(rng() * stalls.length);
+      if (used.has(k)) continue;
+      used.add(k);
+      const [x, y, a] = stalls[k];
+      const r = rng();
+      const type = r < 0.62 ? 'sedan' : r < 0.78 ? 'van' : r < 0.92 ? 'truck' : 'cart';
+      this.spawnVehicle(type, x, -y, Math.atan2(-Math.cos(a), Math.sin(a)));
     }
-    for (const lane of w.lanes.filter((l) => !l.loop)) {
-      for (let i = 0; i < 2; i++) {
-        const v = this.spawnVehicle(i ? 'truck' : 'sedan', 0, 0, 0);
-        v.setAI(lane, i * 2);
+    // Golf carts by the buildings, and the dean's golden cart outside Vider
+    for (const key of ['cartHotchkiss', 'cartDunkin', 'cartDorms', 'cartNorth']) {
+      const [x, z] = w.places[key];
+      this.spawnVehicle('cart', x, z, rng() * Math.PI * 2);
+    }
+    const [dx, dz] = w.places.deanCart;
+    this.spawnVehicle('deanCart', dx, dz, Math.PI / 2);
+    // Traffic on the real streets, carts on the campus service roads
+    const carLanes = w.lanes.filter((l) => l.kind === 'car' && l.length > 150);
+    for (const lane of carLanes) {
+      const n = lane.length > 450 && !this.lowSpec ? 2 : 1;
+      for (let i = 0; i < n; i++) {
+        const v = this.spawnVehicle(['sedan', 'truck', 'sedan', 'van'][Math.floor(rng() * 4)], 0, 0, 0);
+        v.setAI(lane, Math.floor((i / n) * (lane.pts.length - 1)));
       }
     }
+    const cartLanes = w.lanes.filter((l) => l.kind === 'cart').sort((a, b) => b.length - a.length);
+    for (const lane of cartLanes.slice(0, this.lowSpec ? 3 : 6)) {
+      const v = this.spawnVehicle('cart', 0, 0, 0);
+      v.setAI(lane, 0);
+    }
     // Pedestrians around campus hot spots
-    const spots = ['grill', 'library', 'reece', 'chapelDoor', 'waldock', 'smith', 'hotchkiss', 'dixon', 'stadium', 'gym', 'canyonHomes', 'eastLot'];
-    const count = this.lowSpec ? 26 : 42;
+    const spots = ['grill', 'library', 'reece', 'chapelDoor', 'waldock', 'smith', 'hotchkiss', 'dixon', 'slight', 'sweazy', 'quad', 'stadium',
+      'gym', 'king', 'biblical', 'music', 'education', 'herwaldtLawn', 'northLawn', 'placeritos', 'westLot', 'eastLot'];
+    const count = this.lowSpec ? 30 : 50;
     for (let i = 0; i < count; i++) {
       const spot = w.places[spots[i % spots.length]];
-      const [x, z] = w.randomOpenSpot(Math.random, spot, 25);
+      const [x, z] = w.randomOpenSpot(Math.random, spot, 25, true);
       const npc = new NPC(this, x, z);
       this.npcs.push(npc);
     }
@@ -185,12 +206,58 @@ export class Game {
     this.persist();
   }
 
-  persist() { writeSave(this.save); }
+  // Put the player back where they left off last visit
+  restoreState() {
+    const s = this.save;
+    this.time = s.time;
+    this.heat = s.heat;
+    this.player.joy = s.joy;
+    if (!s.pos) return;
+    const [x, z] = s.pos;
+    if (!this.world.inBounds(x, z, 3)) return;
+    if (s.vehicle && VEHICLE_TYPES[s.vehicle.type]) {
+      const v = this.spawnVehicle(s.vehicle.type, x, z, s.heading);
+      v.collideWorld();
+      v.everBorrowed = true;
+      this.player.teleport(v.x, v.z, s.heading);
+      this.player.enter(v);
+    } else {
+      const r = this.world.colliders.resolve(x, z, 0.6);
+      this.player.teleport(r.x, r.z, s.heading);
+    }
+  }
+
+  // Copy the live world state into the save object
+  snapshot() {
+    if (!this.started || this.state === 'faint') return;
+    const p = this.player, s = this.save;
+    s.pos = [Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10];
+    s.heading = Math.round(p.heading * 1000) / 1000;
+    s.vehicle = p.vehicle ? { type: p.vehicle.type } : null;
+    s.time = Math.floor(this.time);
+    s.heat = Math.round(this.heat * 100) / 100;
+    s.joy = Math.max(10, Math.round(p.joy));
+  }
+
+  persist() {
+    this.snapshot();
+    writeSave(this.save);
+  }
 
   resetProgress() {
     clearSave();
     this.save = loadSave();
+    if (this.missions.active) this.missions.active.fail('Starting over.');
+    if (this.ride) this.endRide(false);
+    const sp = this.world.places.spawn;
+    this.player.teleport(sp[0], sp[1], Math.PI);
+    this.player.resetOutfit();
+    this.player.joy = 100;
+    this.time = 8 * 3600;
+    this.heat = 0;
+    this.clearImps(true);
     this.missions.refreshMarkers();
+    this.hud.lastCredits = -1;
   }
 
   toast(t) { this.hud.toast(t); }
@@ -213,9 +280,13 @@ export class Game {
   start() {
     this.audio.unlock();
     this.state = 'play';
+    this.started = true;
     this.clock.getDelta();
     document.body.classList.add('playing');
-    if (!this.save.completed.length && !this.save.credits) {
+    if (hasProgress(this.save)) {
+      const n = this.missions.completedCount() + (this.save.completed.includes('boss') ? 1 : 0);
+      setTimeout(() => this.toast(`Welcome back! <b>${this.save.credits.toLocaleString()}</b> Chapel Credits · ${n}/${this.missions.defs.length} missions done.`), 600);
+    } else {
       setTimeout(() => this.toast('Welcome to Placerita Canyon! Help students (<b>!</b>) to earn <b>Divine Approval</b>.'), 800);
       setTimeout(() => this.toast('Yellow markers on the map are missions. Good deeds attract... opposition.'), 4500);
     }
@@ -452,9 +523,10 @@ export class Game {
   }
 
   titleCam(dt) {
-    const a = this.t * 0.05;
-    this.camera.position.set(Math.sin(a) * 170, 70, -20 + Math.cos(a) * 170);
-    this.camera.lookAt(0, 0, -20);
+    // Slow orbit over the real campus
+    const a = this.t * 0.04;
+    this.camera.position.set(-20 + Math.sin(a) * 240, 95, 40 + Math.cos(a) * 240);
+    this.camera.lookAt(-20, 0, 40);
     this.updateWorldOnly(dt);
   }
 
@@ -467,6 +539,9 @@ export class Game {
   update(dt) {
     const p = this.player, inp = this.input;
     this.time += dt * 6;
+    this.save.playTime += dt;
+    this.autosaveT += dt;
+    if (this.autosaveT > 5) { this.autosaveT = 0; this.persist(); }
     if (!this.missions.active || !this.missions.active.def.noAmbient) this.heat = Math.max(0, this.heat - dt / 40);
 
     // Interaction

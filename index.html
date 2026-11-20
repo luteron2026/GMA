@@ -27,6 +27,7 @@
       <div id="stars"></div>
       <div class="credits"><span id="credits">0</span> <small>Chapel Credits</small></div>
       <div id="vehicle"></div>
+      <div id="street"></div>
     </div>
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="toasts"></div>
@@ -57,6 +58,9 @@
       <p class="tagline">An open-world game of <b>tactical kindness</b> in Placerita Canyon.</p>
       <p class="tagline small">Do good deeds. Earn Divine Approval. Make it to chapel by 9:10.</p>
       <button id="play" class="btn primary">PLAY</button>
+      <div id="save-summary"></div>
+      <button id="new-game" class="btn small-btn">Start a new game</button>
+      <p id="save-warning" class="small"></p>
       <div id="loading">Loading campus…</div>
       <details class="controls">
         <summary>How to play</summary>
@@ -70,7 +74,7 @@
         <p>On phones: left thumb steers, buttons on the right do the rest. Landscape works best.</p>
         <p>Help students with a <b>!</b> bubble to earn <b>Divine Approval</b> ★. The more good you do, the more imps show up. Yellow markers are missions. Finish five to unlock the final showdown on Prayer Hill.</p>
       </details>
-      <p class="disclaimer">A free, fan-made parody. Not affiliated with or endorsed by The Master's University or The Babylon Bee. All characters are fictional.</p>
+      <p class="disclaimer">A free, fan-made parody. Not affiliated with or endorsed by The Master's University or The Babylon Bee. All characters are fictional. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>.</p>
     </div>
   </div>
 
@@ -80,7 +84,7 @@
       <button class="btn primary" id="resume">Resume</button>
       <button class="btn" id="abandon">Abandon mission</button>
       <button class="btn" id="reset">Reset progress</button>
-      <p class="small">Progress saves in this browser.</p>
+      <p class="small">Progress saves automatically on this device, even if you close the page.</p>
     </div>
   </div>
 

@@ -24,20 +24,22 @@ Runs in any modern browser on desktop and phone. There's nothing to install and 
 
 ## What's in it
 
-- **Campus:** MacArthur Chapel (with steeple), Dunkin Student Center / Mustang Grill, Powell Library, Reece Center, the six dorms (Hotchkiss, Dixon, Slight, Sweazy, Waldock, C.W. Smith), Herwaldt Stadium, the baseball field, Canyon Homes, Placerita Canyon Rd and creek, and Prayer Hill.
+- **The real campus, at real scale:** The map is built from OpenStreetMap data, so buildings have their real outlines and sit where they really are. Streets, parking lots and fields follow the real layout too. That includes the MacArthur Center (where chapel meets in Bross Court), the Dunkin Student Center / Mustang Grill, Powell Library, the Reese Center, King Hall, the six dorms (Hotchkiss, Dixon, Slight, Sweazy, Waldock, C.W. Smith), North Campus (Biblical Studies, Music, Business, Humanities), Lou Herwaldt Stadium / Reese Field with its baseball diamond, the intramural field, Placerita Bible Church, the Placeritos neighborhood, Placerita Creek, and the trails up the hill behind campus.
+- **Street names:** Green street signs stand at intersections (Placerita Canyon Rd, Placeritos Blvd, Meadview Ave, Quigley Canyon Rd, Amelia Ln). The HUD shows the name of the street you're on, or else the area you're in.
+- **Made up for the game:** Prayer Hill (the clearing on the hillside trail), the stands behind home plate, and where the doors are. Building heights are taken from the map data where it has them, and estimated where it doesn't.
 - **Good deeds:** Students with a **!** need help (dropped textbooks, lost lanyards, ring-by-spring plans). Students with a 🚗 want a ride across campus.
 - **Borrowing cars:** Golf carts, commuter sedans, the facilities truck, the outreach van, and Dean Placerita's golden cart. You get them by asking nicely.
 - **Imps:** They show up as your Divine Approval rises. Throw Bibles to stun them, then hit them again, kick them, or drive into them. Your car's Hallelujah Horn stuns every imp nearby.
 - **8 missions:**
-  1. **The 9:10 Sprint:** get to chapel before the doors close.
+  1. **The 9:10 Sprint:** run from Waldock Hall to chapel at the MacArthur Center before the doors close.
   2. **Apple Pie Night:** carry pies from the Mustang Grill to the Hotchyard. Every bump costs a pie.
-  3. **Classy Off Campus:** find a tie, blazer, and dress shoes, then get to class.
-  4. **Commuter Carpool:** pick up stranded commuters and drive them to chapel.
+  3. **Classy Off Campus:** find a tie (Business Center), a blazer (Schaffer Center), and dress shoes (Placeritos Blvd), then get to class at the Reese Center.
+  4. **Commuter Carpool:** pick up stranded commuters in the West, North, and C.W. Smith lots and drive them to chapel.
   5. **Gratitouille:** gather the ingredients for Dixon's Italian Thanksgiving.
-  6. **Stadium Cleanse:** clear the imps out of Herwaldt Stadium.
-  7. **Quiet in the Library:** catch and shush the loud students.
+  6. **Stadium Cleanse:** clear the imps out of Lou Herwaldt Stadium.
+  7. **Quiet in the Library:** catch and shush the loud students on the King Hall lawn.
   8. **Showdown on Prayer Hill:** the final boss. Unlocks after 5 other missions.
-- Progress (Chapel Credits and finished missions) is saved in your browser.
+- **Saves automatically.** Chapel Credits, finished missions, stats, your spot on campus, the car you're driving, the time of day, and your stars are all kept on your device. The game saves every few seconds and whenever you close or leave the page. Coming back shows **Continue**. A mission you were in the middle of starts over. Saves stay in that browser on that device, so private browsing or clearing site data erases them. Saves from before the real-campus map keep their credits and missions, but start you back at the spawn point.
 
 ## Publish it (free, with GitHub Pages)
 
@@ -65,7 +67,7 @@ style.css             all styling
 src/main.js           boot + menu wiring
 src/game.js           game loop, camera, spawning, interactions, good deeds
 src/world.js          builds the campus (ground, roads, buildings, trees, hills)
-src/data/campus.js    campus layout data: edit this to move or rename buildings
+src/data/campus.js    campus layout, generated from OpenStreetMap (don't edit by hand)
 src/player.js         on-foot movement and Bible throwing
 src/vehicles.js       driving physics + AI traffic
 src/npcs.js           students, their requests, and dialogue
@@ -75,12 +77,29 @@ src/hud.js            HUD + minimap
 src/input.js          keyboard + touch
 src/audio.js          synthesized sound effects (no audio files)
 vendor/three/         Three.js r170 (MIT)
+tools/osm_to_campus.py  turns an OpenStreetMap export into src/data/campus.js
+tools/data/tmu.osm    the OpenStreetMap export of the campus
 ```
 
-To tweak the map, edit `src/data/campus.js`. Coordinates are in meters, with x pointing east and y pointing north.
+### Changing the map
+
+`src/data/campus.js` is generated. Coordinates are in meters at real scale, with x pointing east and y pointing north. To change the map:
+
+1. To pick up newer map data, export the area again at [openstreetmap.org](https://www.openstreetmap.org/) (zoom to the campus, then **Export**) and save it over `tools/data/tmu.osm`.
+2. To rename a building or move a mission spot, edit the `NAMED` table or the `places` block in `tools/osm_to_campus.py`.
+3. Regenerate:
+
+```bash
+pip install shapely
+```
+
+```bash
+python3 tools/osm_to_campus.py tools/data/tmu.osm src/data/campus.js
+```
 
 ## Credits
 
 - Built with [Three.js](https://threejs.org) (MIT license, included in `vendor/three/`).
+- Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the [Open Database License](https://opendatacommons.org/licenses/odbl/).
 - All models, textures, and sounds are generated in code. There are no third-party art assets.
 - Inspired by the "good deeds instead of crimes" premise of the Babylon Bee's *Grand Faith Auto*. All characters, missions, and art here are original.
