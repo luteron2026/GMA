@@ -8,7 +8,8 @@ import { Vehicle, vehicleContacts } from './vehicles.js';
 import { NPC } from './npcs.js';
 import { Imp, Projectile } from './enemies.js';
 import { Missions } from './missions.js';
-import { loadSave, writeSave, clearSave } from './save.js';
+import { loadSave, writeSave, clearSave, hasProgress } from './save.js';
+import { VEHICLE_TYPES } from './models.js';
 import { clamp, lerp } from './physics.js';
 
 const P = (x, y) => [x, -y];
@@ -94,13 +95,21 @@ export class Game {
     this.missions = new Missions(this);
     this.missions.init();
     this.populate();
+    this.started = false;
+    this.autosaveT = 0;
+    this.restoreState();
 
-    this.camPos = new THREE.Vector3(sp[0], 30, sp[1] + 40);
-    this.camLook = new THREE.Vector3(sp[0], 0, sp[1]);
+    const pp = this.player;
+    this.camPos = new THREE.Vector3(pp.x - Math.sin(pp.heading) * 8, 30, pp.z - Math.cos(pp.heading) * 8);
+    this.camLook = new THREE.Vector3(pp.x, 0, pp.z);
     this.camera.position.copy(this.camPos);
 
     this.input.bindCanvas(canvas);
     addEventListener('resize', () => this.resize());
+    // Save whenever the player leaves: closing the tab, switching apps, or navigating away
+    addEventListener('pagehide', () => this.persist());
+    addEventListener('beforeunload', () => this.persist());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.persist(); });
     this.resize();
     this.clock = new THREE.Clock();
     this.t = 0;
@@ -185,12 +194,58 @@ export class Game {
     this.persist();
   }
 
-  persist() { writeSave(this.save); }
+  // Put the player back where they left off last visit
+  restoreState() {
+    const s = this.save;
+    this.time = s.time;
+    this.heat = s.heat;
+    this.player.joy = s.joy;
+    if (!s.pos) return;
+    const [x, z] = s.pos;
+    if (!this.world.inBounds(x, z, 3)) return;
+    if (s.vehicle && VEHICLE_TYPES[s.vehicle.type]) {
+      const v = this.spawnVehicle(s.vehicle.type, x, z, s.heading);
+      v.collideWorld();
+      v.everBorrowed = true;
+      this.player.teleport(v.x, v.z, s.heading);
+      this.player.enter(v);
+    } else {
+      const r = this.world.colliders.resolve(x, z, 0.6);
+      this.player.teleport(r.x, r.z, s.heading);
+    }
+  }
+
+  // Copy the live world state into the save object
+  snapshot() {
+    if (!this.started || this.state === 'faint') return;
+    const p = this.player, s = this.save;
+    s.pos = [Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10];
+    s.heading = Math.round(p.heading * 1000) / 1000;
+    s.vehicle = p.vehicle ? { type: p.vehicle.type } : null;
+    s.time = Math.floor(this.time);
+    s.heat = Math.round(this.heat * 100) / 100;
+    s.joy = Math.max(10, Math.round(p.joy));
+  }
+
+  persist() {
+    this.snapshot();
+    writeSave(this.save);
+  }
 
   resetProgress() {
     clearSave();
     this.save = loadSave();
+    if (this.missions.active) this.missions.active.fail('Starting over.');
+    if (this.ride) this.endRide(false);
+    const sp = this.world.places.spawn;
+    this.player.teleport(sp[0], sp[1], Math.PI);
+    this.player.resetOutfit();
+    this.player.joy = 100;
+    this.time = 8 * 3600;
+    this.heat = 0;
+    this.clearImps(true);
     this.missions.refreshMarkers();
+    this.hud.lastCredits = -1;
   }
 
   toast(t) { this.hud.toast(t); }
@@ -213,9 +268,13 @@ export class Game {
   start() {
     this.audio.unlock();
     this.state = 'play';
+    this.started = true;
     this.clock.getDelta();
     document.body.classList.add('playing');
-    if (!this.save.completed.length && !this.save.credits) {
+    if (hasProgress(this.save)) {
+      const n = this.missions.completedCount() + (this.save.completed.includes('boss') ? 1 : 0);
+      setTimeout(() => this.toast(`Welcome back! <b>${this.save.credits.toLocaleString()}</b> Chapel Credits · ${n}/${this.missions.defs.length} missions done.`), 600);
+    } else {
       setTimeout(() => this.toast('Welcome to Placerita Canyon! Help students (<b>!</b>) to earn <b>Divine Approval</b>.'), 800);
       setTimeout(() => this.toast('Yellow markers on the map are missions. Good deeds attract... opposition.'), 4500);
     }
@@ -467,6 +526,9 @@ export class Game {
   update(dt) {
     const p = this.player, inp = this.input;
     this.time += dt * 6;
+    this.save.playTime += dt;
+    this.autosaveT += dt;
+    if (this.autosaveT > 5) { this.autosaveT = 0; this.persist(); }
     if (!this.missions.active || !this.missions.active.def.noAmbient) this.heat = Math.max(0, this.heat - dt / 40);
 
     // Interaction

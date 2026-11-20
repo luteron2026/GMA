@@ -37,7 +37,7 @@ Runs in any modern browser on desktop and phone. There's nothing to install and 
   6. **Stadium Cleanse:** clear the imps out of Herwaldt Stadium.
   7. **Quiet in the Library:** catch and shush the loud students.
   8. **Showdown on Prayer Hill:** the final boss. Unlocks after 5 other missions.
-- Progress (Chapel Credits and finished missions) is saved in your browser.
+- **Saves automatically.** Chapel Credits, finished missions, stats, your spot on campus, the car you're driving, the time of day, and your stars are all kept on your device. The game saves every few seconds and whenever you close or leave the page. Coming back shows **Continue**. A mission you were in the middle of starts over. Saves stay in that browser on that device, so private browsing or clearing site data erases them.
 
 ## Publish it (free, with GitHub Pages)
 
