@@ -1,29 +1,30 @@
 import * as THREE from 'three';
 import { CAMPUS } from './data/campus.js';
-import { Colliders, pointInPoly, distToPolyEdge, distToPolyline, mulberry32 } from './physics.js';
+import { Colliders, pointInPoly, distToPolyline, mulberry32 } from './physics.js';
 import { mat, makeLabel, GEOM } from './models.js';
+import { CORE, OUTER, groundY, heightAtCampus, shrubAt, inCore, roofFor, TREES, STRUCTURES, setTerrainStride } from './terrain.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
 
 const GROUND_COLORS = {
-  campus: 0x93a95c,
-  grass: 0x7fa652,
-  field: 0x5f9e45,
-  turf: 0x4f9a3c,
-  pitch: 0x44a040,
-  court: 0x9a4a3c,
-  sand: 0xe0cf9a,
-  dirt: 0xb99a6a,
+  campus: '#93a95c',
+  grass: '#7fa652',
+  field: '#5f9e45',
+  turf: '#4f9a3c',
+  pitch: '#44a040',
+  court: '#9a4a3c',
+  sand: '#e0cf9a',
+  dirt: '#b99a6a',
 };
 
-const ROAD_STYLE = {
-  street: { color: 0x3d4046, y: 0.1, curb: true },
-  service: { color: 0x4a4d53, y: 0.095 },
-  aisle: { color: 0x4f5258, y: 0.09 },
-  driveway: { color: 0x5c5e62, y: 0.085 },
-  path: { color: 0xcfc8b8, y: 0.08 },
-  trail: { color: 0xa58a5e, y: 0.075 },
+const ROAD_COLORS = {
+  street: '#3d4046',
+  service: '#4a4d53',
+  aisle: '#4f5258',
+  driveway: '#5c5e62',
+  path: '#cfc8b8',
+  trail: '#a58a5e',
 };
 
 export class World {
@@ -42,206 +43,274 @@ export class World {
     const b = CAMPUS.bounds;
     this.bounds = { minX: b.minX, maxX: b.maxX, minZ: -b.maxY, maxZ: -b.minY };
     this.labels = [];
+    this.groundY = groundY;
+    setTerrainStride(lowSpec ? 2 : 1);
     this.build();
   }
 
   build() {
-    const s = this.scene;
-
-    // Base ground: dry Santa Clarita grass
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(2600, 2600).rotateX(-Math.PI / 2), mat(0xb7a46a));
-    ground.position.y = -0.12;
-    ground.receiveShadow = true;
-    s.add(ground);
-
-    // Irrigated campus grounds, lawns, fields and courts (real outlines)
-    let y = 0.0;
-    for (const lawn of CAMPUS.lawns) {
-      y += 0.004;
-      const mesh = new THREE.Mesh(polyGeometry(lawn.poly), mat(GROUND_COLORS[lawn.kind]));
-      mesh.position.y = y;
-      mesh.receiveShadow = true;
-      s.add(mesh);
-      if (lawn.lines && (lawn.kind === 'pitch' || lawn.kind === 'court')) this.addFieldLines(lawn.lines, y + 0.003, lawn.kind === 'pitch');
-    }
-    this.buildDiamond(y + 0.004);
-    // Prayer Hill clearing
-    const [hx, hz] = this.places.hill;
-    const clearing = new THREE.Mesh(new THREE.CircleGeometry(34, 40).rotateX(-Math.PI / 2), mat(GROUND_COLORS.dirt));
-    clearing.position.set(hx, 0.03, hz);
-    clearing.receiveShadow = true;
-    s.add(clearing);
-
-    this.buildWashes();
-
-    // Parking lots
-    for (const lot of this.lots) {
-      const m = new THREE.Mesh(polyGeometry(lot.poly), mat(0x55585e));
-      m.position.y = 0.07; m.receiveShadow = true; s.add(m);
-    }
-    this.addStallLines();
-
-    // Roads, streets, paths and trails
-    // (batched into one mesh per road style to keep draw calls low)
-    const roadBatch = new Batcher();
-    for (const r of this.roads) {
-      const st = ROAD_STYLE[r.kind] || ROAD_STYLE.service;
-      roadBatch.add(r.kind, ribbonGeometry(r.wpts, r.width, false).translate(0, st.y, 0), st.color);
-      if (st.curb) {
-        roadBatch.add('curb', ribbonGeometry(r.wpts, r.width + 1.4, false).translate(0, st.y - 0.008, 0), 0xc9c4b8);
-        this.addCenterLine(r);
-      }
-    }
-    for (const m of roadBatch.meshes(() => new THREE.MeshLambertMaterial({ vertexColors: true }))) {
-      m.receiveShadow = true; s.add(m);
-    }
-
+    this.buildTerrain();
+    this.buildFieldGoals();
+    this.buildWashRocks();
     this.buildBuildings();
     this.buildStadium();
     this.buildProps();
     this.buildStreetSigns();
+    this.buildStopSigns();
     this.buildBoundary();
     this.buildTrees();
-    this.buildHills();
+    this.buildStructures();
     this.buildLaneHints();
   }
 
-  addCenterLine(r) {
-    const dash = new THREE.BoxGeometry(0.25, 0.02, 3);
-    const pts = r.wpts;
-    const positions = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i], b = pts[i + 1];
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      const ang = Math.atan2(b[0] - a[0], b[1] - a[1]);
-      for (let d = 3; d < len - 3; d += 8) {
-        const t = d / len;
-        positions.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, ang]);
+  // ---------- ground ----------
+
+  buildTerrain() {
+    // Detailed ground from the LiDAR, with lawns, lots, roads and markings painted on
+    const g = CORE, st = this.lowSpec ? 2 : 1;
+    const nx = (g.nx - 1) / st + 1, ny = (g.ny - 1) / st + 1;
+    const pos = new Float32Array(nx * ny * 3), uv = new Float32Array(nx * ny * 2);
+    const wx = g.x1 - g.x0, wy = g.y1 - g.y0;
+    for (let j = 0, k = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++, k++) {
+        const x = g.x0 + i * st * g.step, y = g.y0 + j * st * g.step;
+        pos[k * 3] = x; pos[k * 3 + 1] = g.h[j * st * g.nx + i * st]; pos[k * 3 + 2] = -y;
+        uv[k * 2] = (x - g.x0) / wx; uv[k * 2 + 1] = (y - g.y0) / wy;
       }
     }
-    const inst = new THREE.InstancedMesh(dash, mat(0xf2c94c), positions.length);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-    positions.forEach(([x, z, ang], i) => {
-      q.setFromAxisAngle(up, ang);
-      m4.compose(new THREE.Vector3(x, 0.12, z), q, new THREE.Vector3(1, 1, 1));
-      inst.setMatrixAt(i, m4);
-    });
-    this.scene.add(inst);
-  }
-
-  // White lines between parking stalls
-  addStallLines() {
-    const stalls = CAMPUS.stalls;
-    const geo = new THREE.BoxGeometry(0.15, 0.02, 4.8);
-    const inst = new THREE.InstancedMesh(geo, mat(0xf0f0f0), stalls.length * 2);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1);
-    let i = 0;
-    for (const [x, y, a] of stalls) {
-      // a: direction the stall opens toward (campus space); stall lines run parallel to it
-      const dx = Math.cos(a), dy = Math.sin(a);
-      const px = -dy, py = dx;
-      const rot = Math.atan2(dx, -dy); // world heading of (dx, -dy)
-      q.setFromAxisAngle(up, rot);
-      for (const side of [-1.35, 1.35]) {
-        m4.compose(new THREE.Vector3(x + px * side, 0.08, -(y + py * side)), q, one);
-        inst.setMatrixAt(i++, m4);
+    const idx = new Uint32Array((nx - 1) * (ny - 1) * 6);
+    let n = 0;
+    for (let j = 0; j < ny - 1; j++) {
+      for (let i = 0; i < nx - 1; i++) {
+        const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+        // Same diagonal (a-d) as terrain.js uses for heights; wound to face up in world space
+        idx[n++] = a; idx[n++] = b; idx[n++] = d;
+        idx[n++] = a; idx[n++] = d; idx[n++] = c;
       }
     }
-    inst.count = i;
-    this.scene.add(inst);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.computeVertexNormals();
+    const tex = new THREE.CanvasTexture(this.paintGround(this.lowSpec ? 2 : 3));
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex }));
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+    this.groundMesh = ground;
+
+    // The mountains around Placerita Canyon, from terrain tiles (coarser, vertex-colored)
+    const o = OUTER;
+    const opos = new Float32Array(o.nx * o.ny * 3), col = new Float32Array(o.nx * o.ny * 3);
+    const rng = mulberry32(31);
+    const dry = new THREE.Color(0xb3a066), brush = new THREE.Color(0x7d7d4a), rock = new THREE.Color(0xa08c6c), c = new THREE.Color();
+    for (let j = 0, k = 0; j < o.ny; j++) {
+      for (let i = 0; i < o.nx; i++, k++) {
+        const x = o.x0 + i * o.step, y = o.y0 + j * o.step;
+        opos[k * 3] = x; opos[k * 3 + 1] = o.h[k]; opos[k * 3 + 2] = -y;
+        const hx = (o.h[Math.min(k + 1, o.h.length - 1)] - o.h[Math.max(k - 1, 0)]) / (2 * o.step);
+        const hy = (o.h[Math.min(k + o.nx, o.h.length - 1)] - o.h[Math.max(k - o.nx, 0)]) / (2 * o.step);
+        const slope = Math.hypot(hx, hy);
+        // North-facing slopes hold more chaparral; steep ones show rock
+        const north = hy < 0 ? Math.min(1, -hy * 2) : 0;
+        c.copy(dry).lerp(brush, Math.min(1, 0.25 + north * 0.6 + rng() * 0.25)).lerp(rock, Math.min(0.7, Math.max(0, slope - 0.6)));
+        col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+      }
+    }
+    const oidx = [];
+    const m = o.step * 1.01;
+    for (let j = 0; j < o.ny - 1; j++) {
+      for (let i = 0; i < o.nx - 1; i++) {
+        const x = o.x0 + i * o.step, y = o.y0 + j * o.step;
+        // Skip cells the detailed ground covers completely
+        if (x >= g.x0 + m && x + o.step <= g.x1 - m && y >= g.y0 + m && y + o.step <= g.y1 - m) continue;
+        const a = j * o.nx + i, b = a + 1, cc = a + o.nx, d = cc + 1;
+        oidx.push(a, b, d, a, d, cc);
+      }
+    }
+    const ogeo = new THREE.BufferGeometry();
+    ogeo.setAttribute('position', new THREE.BufferAttribute(opos, 3));
+    ogeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    ogeo.setIndex(oidx);
+    ogeo.computeVertexNormals();
+    const mountains = new THREE.Mesh(ogeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    mountains.receiveShadow = true;
+    this.scene.add(mountains);
   }
 
-  // Rotated field markings from an oriented box [cx, cy, w, h, angle]
-  addFieldLines([cx, cy, w, h, a], y, soccer) {
-    const lm = mat(0xf4f4f4);
-    const g = new THREE.Group();
-    const add = (sx, sz, x, z) => {
-      const m = new THREE.Mesh(GEOM.box, lm);
-      m.scale.set(sx, 0.01, sz); m.position.set(x, 0, z); g.add(m);
+  // Paint the ground texture: natural cover from the LiDAR, then everything from the map
+  paintGround(ppm) {
+    const g = CORE;
+    const wx = g.x1 - g.x0, wy = g.y1 - g.y0;
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(wx * ppm); cv.height = Math.round(wy * ppm);
+    const ctx = cv.getContext('2d');
+    const P = (x, y) => [(x - g.x0) * ppm, (g.y1 - y) * ppm];
+
+    // 1. Dry grass, chaparral and bare slopes, one pixel per 2 m height sample
+    const small = document.createElement('canvas');
+    small.width = g.nx; small.height = g.ny;
+    const sctx = small.getContext('2d');
+    const img = sctx.createImageData(g.nx, g.ny);
+    const rng = mulberry32(5);
+    const dry = [190, 170, 112], brush = [112, 118, 72], bare = [176, 150, 110];
+    for (let j = 0; j < g.ny; j++) {
+      for (let i = 0; i < g.nx; i++) {
+        const k = j * g.nx + i;
+        const i0 = Math.max(0, i - 1), i1 = Math.min(g.nx - 1, i + 1), j0 = Math.max(0, j - 1), j1 = Math.min(g.ny - 1, j + 1);
+        const sx = (g.h[j * g.nx + i1] - g.h[j * g.nx + i0]) / ((i1 - i0) * g.step);
+        const sy = (g.h[j1 * g.nx + i] - g.h[j0 * g.nx + i]) / ((j1 - j0) * g.step);
+        const slope = Math.hypot(sx, sy);
+        const x = g.x0 + i * g.step, y = g.y0 + j * g.step;
+        const s = Math.min(1, shrubAt(x, y) * 1.6);
+        const b = Math.min(0.8, Math.max(0, (slope - 0.5) * 1.2)) * (1 - s);
+        const nz = 0.92 + rng() * 0.12;
+        const row = (g.ny - 1 - j) * g.nx + i; // canvas rows run north to south
+        for (let ch = 0; ch < 3; ch++) {
+          const v = dry[ch] * (1 - s) + brush[ch] * s;
+          img.data[row * 4 + ch] = (v * (1 - b) + bare[ch] * b) * nz;
+        }
+        img.data[row * 4 + 3] = 255;
+      }
+    }
+    sctx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    // Each small pixel is centered on its height sample
+    const sp = g.step * ppm;
+    ctx.drawImage(small, -sp / 2, -sp / 2, g.nx * sp, g.ny * sp);
+
+    const path = (pts) => {
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => { const [px, py] = P(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
     };
+    const fillPoly = (pts, color) => { path(pts); ctx.closePath(); ctx.fillStyle = color; ctx.fill(); };
+    const stroke = (pts, color, width, dash) => {
+      path(pts);
+      ctx.strokeStyle = color; ctx.lineWidth = width * ppm;
+      ctx.setLineDash(dash ? dash.map((d) => d * ppm) : []);
+      ctx.stroke();
+    };
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // 2. Irrigated lawns, fields and courts (real outlines)
+    for (const lawn of CAMPUS.lawns) fillPoly(lawn.poly, GROUND_COLORS[lawn.kind]);
+    for (const lawn of CAMPUS.lawns) {
+      if (lawn.lines && (lawn.kind === 'pitch' || lawn.kind === 'court')) this.paintFieldLines(ctx, P, ppm, lawn.lines, lawn.kind === 'pitch');
+    }
+    // Baseball diamond
+    const d = CAMPUS.diamond;
+    fillPoly(d.dirt, '#b5683f');
+    fillPoly(d.grass, GROUND_COLORS.turf);
+    const [hx, hy] = d.bases[0], [sx, sy] = d.bases[2];
+    const [mx, my] = P(hx + (sx - hx) * 0.47, hy + (sy - hy) * 0.47);
+    ctx.fillStyle = '#b5683f'; ctx.beginPath(); ctx.arc(mx, my, 2.7 * ppm, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    d.bases.forEach(([x, y], i) => {
+      const [px, py] = P(x, y), s = (i ? 0.5 : 0.6) * ppm;
+      ctx.save(); ctx.translate(px, py); ctx.rotate(Math.PI / 4); ctx.fillRect(-s / 2, -s / 2, s, s); ctx.restore();
+    });
+    // Prayer Hill clearing
+    const [phx, phy] = CAMPUS.places.hill;
+    const [cpx, cpy] = P(phx, phy);
+    ctx.fillStyle = GROUND_COLORS.dirt; ctx.beginPath(); ctx.arc(cpx, cpy, 34 * ppm, 0, Math.PI * 2); ctx.fill();
+
+    // 3. Dry creek washes
+    for (const w of CAMPUS.washes) stroke(w.pts, '#d8c9a3', w.width);
+
+    // 4. Parking lots and stall lines
+    for (const lot of CAMPUS.lots) fillPoly(lot.poly, '#55585e');
+    ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 0.15 * ppm; ctx.setLineDash([]); ctx.lineCap = 'butt';
+    ctx.beginPath();
+    for (const [x, y, a] of CAMPUS.stalls) {
+      const dx = Math.cos(a), dy = Math.sin(a), px = -dy, py = dx;
+      for (const side of [-1.35, 1.35]) {
+        const [x1, y1] = P(x + px * side - dx * 2.4, y + py * side - dy * 2.4);
+        const [x2, y2] = P(x + px * side + dx * 2.4, y + py * side + dy * 2.4);
+        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+      }
+    }
+    ctx.stroke();
+    ctx.lineCap = 'round';
+
+    // 5. Trails, paths, driveways, service roads and streets (with curbs and a center line)
+    for (const kind of ['trail', 'path', 'driveway', 'aisle', 'service']) {
+      for (const r of CAMPUS.roads) if (r.kind === kind) stroke(r.pts, ROAD_COLORS[kind], r.width);
+    }
+    const streets = CAMPUS.roads.filter((r) => r.kind === 'street');
+    for (const r of streets) stroke(r.pts, '#c9c4b8', r.width + 1.4);
+    for (const r of streets) stroke(r.pts, ROAD_COLORS.street, r.width);
+    ctx.lineCap = 'butt';
+    for (const r of streets) stroke(r.pts, '#f2c94c', 0.25, [3, 5]);
+    ctx.setLineDash([]);
+
+    // 6. Fine grain so close-up ground isn't flat color
+    const tile = document.createElement('canvas');
+    tile.width = tile.height = 128;
+    const tctx = tile.getContext('2d');
+    const timg = tctx.createImageData(128, 128);
+    for (let i = 0; i < 128 * 128; i++) {
+      const v = 215 + rng() * 40;
+      timg.data[i * 4] = timg.data[i * 4 + 1] = timg.data[i * 4 + 2] = v; timg.data[i * 4 + 3] = 255;
+    }
+    tctx.putImageData(timg, 0, 0);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = ctx.createPattern(tile, 'repeat');
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.globalCompositeOperation = 'source-over';
+    return cv;
+  }
+
+  // Field markings from an oriented box [cx, cy, w, h, angle] (campus space)
+  paintFieldLines(ctx, P, ppm, [cx, cy, w, h, a], soccer) {
+    const [px, py] = P(cx, cy);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(-a); // canvas y points south
+    ctx.scale(ppm, ppm);
+    ctx.fillStyle = '#f4f4f4';
+    const add = (sx, sz, x, z) => ctx.fillRect(x - sx / 2, z - sz / 2, sx, sz);
     const iw = w - 3, ih = h - 3;
     add(iw, 0.25, 0, -ih / 2); add(iw, 0.25, 0, ih / 2);
     add(0.25, ih, -iw / 2, 0); add(0.25, ih, iw / 2, 0);
     if (soccer) {
       add(0.25, ih, 0, 0);
-      const circle = new THREE.Mesh(new THREE.RingGeometry(8.9, 9.15, 40).rotateX(-Math.PI / 2), lm);
-      g.add(circle);
+      ctx.strokeStyle = '#f4f4f4'; ctx.lineWidth = 0.25;
+      ctx.beginPath(); ctx.arc(0, 0, 9.15, 0, Math.PI * 2); ctx.stroke();
       for (const sgn of [-1, 1]) {
         add(0.25, 40, sgn * (iw / 2 - 16.5), 0);
         add(16.5, 0.25, sgn * (iw / 2 - 8.25), -20); add(16.5, 0.25, sgn * (iw / 2 - 8.25), 20);
-        const goal = new THREE.Mesh(GEOM.box, mat(0xffffff));
-        goal.scale.set(0.3, 2.4, 7.3); goal.position.set(sgn * (iw / 2 + 0.6), 1.2, 0); g.add(goal);
       }
     } else {
       add(0.2, ih, 0, 0);
     }
-    g.position.set(cx, y, -cy);
-    g.rotation.y = a; // local +x lies along the box's long side
-    this.scene.add(g);
+    ctx.restore();
   }
 
-  buildDiamond(y) {
-    const d = CAMPUS.diamond;
-    const dirt = new THREE.Mesh(polyGeometry(d.dirt), mat(0xb5683f));
-    dirt.position.y = y; dirt.receiveShadow = true; this.scene.add(dirt);
-    const grass = new THREE.Mesh(polyGeometry(d.grass), mat(GROUND_COLORS.turf));
-    grass.position.y = y + 0.003; grass.receiveShadow = true; this.scene.add(grass);
-    d.bases.forEach(([x, by], i) => {
-      const base = new THREE.Mesh(GEOM.box, mat(0xffffff));
-      base.scale.set(i ? 0.5 : 0.6, 0.08, i ? 0.5 : 0.6);
-      base.rotation.y = Math.PI / 4;
-      base.position.set(x, y + 0.04, -by);
-      this.scene.add(base);
-    });
-    // Pitcher's mound
-    const [hx, hy] = d.bases[0], [sx, sy] = d.bases[2];
-    const mound = new THREE.Mesh(new THREE.CircleGeometry(2.7, 20).rotateX(-Math.PI / 2), mat(0xb5683f));
-    mound.position.set(hx + (sx - hx) * 0.47, y + 0.006, -(hy + (sy - hy) * 0.47));
-    this.scene.add(mound);
-  }
-
-  // Lou Herwaldt Stadium: bleachers and a backstop behind home plate
-  buildStadium() {
-    const [hx, hy] = CAMPUS.diamond.bases[0], [sx, sy] = CAMPUS.diamond.bases[2];
-    const len = Math.hypot(sx - hx, sy - hy);
-    const dx = (sx - hx) / len, dy = (sy - hy) / len;
-    const cx = hx - dx * 9, cy = hy - dy * 9;
-    const g = new THREE.Group();
-    const steel = mat(0x8a95a5), seat = mat(0x1f3a6e);
-    // Rows rise away from the field (local +z); the backstop net sits on the field side
-    for (let k = 0; k < 4; k++) {
-      const step = new THREE.Mesh(GEOM.box, k % 2 ? steel : seat);
-      step.scale.set(22, 0.6 + k * 0.7, 1.4);
-      step.position.set(0, (0.6 + k * 0.7) / 2, -1 + 1.4 * k);
-      step.castShadow = !this.lowSpec;
-      g.add(step);
+  buildFieldGoals() {
+    for (const lawn of CAMPUS.lawns) {
+      if (lawn.kind !== 'pitch' || !lawn.lines) continue;
+      const [cx, cy, w, , a] = lawn.lines;
+      const iw = w - 3;
+      for (const sgn of [-1, 1]) {
+        const d = sgn * (iw / 2 + 0.6);
+        const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+        const goal = new THREE.Mesh(GEOM.box, mat(0xffffff));
+        goal.scale.set(0.3, 2.4, 7.3);
+        goal.position.set(x, heightAtCampus(x, y) + 1.2, -y);
+        goal.rotation.y = a;
+        this.scene.add(goal);
+      }
     }
-    const net = new THREE.Mesh(GEOM.box, new THREE.MeshLambertMaterial({ color: 0x333333, transparent: true, opacity: 0.35 }));
-    net.scale.set(16, 6, 0.1); net.position.set(0, 3, -3); g.add(net);
-    g.position.set(cx, 0, -cy);
-    // Local -z points at the field: world (dx, -dy) = (-sin θ, -cos θ)
-    const th = Math.atan2(-dx, dy);
-    g.rotation.y = th;
-    this.scene.add(g);
-    // Collider box around the stands and net
-    const ax = [Math.cos(th), -Math.sin(th)], az = [Math.sin(th), Math.cos(th)];
-    const corners = [[-11, -3.2], [11, -3.2], [11, 4], [-11, 4]].map(([a, b]) => [cx + ax[0] * a + az[0] * b, -cy + ax[1] * a + az[1] * b]);
-    this.colliders.addPoly(corners, 'bleachers');
-    const label = makeLabel('Lou Herwaldt Stadium', 'Reese Field', { width: 15 });
-    const [px, pz] = this.places.stadium;
-    label.position.set(px, 9, pz);
-    this.scene.add(label);
-    this.labels.push(label);
   }
 
-  buildWashes() {
+  buildWashRocks() {
     // Placerita Creek and Newhall Creek: dry, rocky washes
     const rng = mulberry32(7);
     const rocks = [];
     for (const w of CAMPUS.washes) {
       const pts = w.pts.map(W);
-      const m = new THREE.Mesh(ribbonGeometry(pts, w.width, false), mat(0xd8c9a3));
-      m.position.y = 0.05; m.receiveShadow = true; this.scene.add(m);
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1];
         const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -259,7 +328,7 @@ export class World {
       }
       if (best && w.name) {
         const label = makeLabel(w.name, null, { width: 10, bg: 'rgba(60,90,120,0.8)' });
-        label.position.set(best[0], 3, best[1]);
+        label.position.set(best[0], groundY(best[0], best[1]) + 3, best[1]);
         this.scene.add(label);
         this.labels.push(label);
       }
@@ -267,11 +336,13 @@ export class World {
     const inst = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), mat(0xb3a587), rocks.length);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     rocks.forEach(([x, z, s], i) => {
-      m4.compose(v.set(x, s * 0.2, z), q.setFromAxisAngle(up, rng() * 3), sc.set(s, s * 0.6, s));
+      m4.compose(v.set(x, groundY(x, z) + s * 0.2, z), q.setFromAxisAngle(up, rng() * 3), sc.set(s, s * 0.6, s));
       inst.setMatrixAt(i, m4);
     });
     this.scene.add(inst);
   }
+
+  // ---------- buildings ----------
 
   buildBuildings() {
     const wallTex = makeWindowTexture();
@@ -281,34 +352,29 @@ export class World {
     // into a handful of meshes (one per texture) so phones don't choke on draw calls.
     const batch = new Batcher();
     for (const b of this.buildings) {
-      const shape = new THREE.Shape(b.poly.map(([x, y]) => new THREE.Vector2(x, y)));
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: b.height, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
-      const roofColor = b.roofColor && b.roof !== 'gable' ? b.roofColor : shade(b.color, 0.78);
+      const { walls, roof, top, base, pitched } = buildingGeometry(b, roofFor(b.id));
+      b.top = top; b.base = base;
+      let roofColor;
+      if (b.roofColor) roofColor = b.roofColor;
+      else if (pitched) roofColor = b.kind === 'house' ? 0x8c4a3a : 0xa65a42; // clay tile
+      else roofColor = b.kind === 'house' ? 0x8f8a80 : shade(b.color, 0.8); // flat gravel / membrane
       if (b.name) {
         const tex = b.dorm ? dormTex : wallTex;
-        const wallMat = new THREE.MeshLambertMaterial({ color: b.color, map: tex });
-        const mesh = new THREE.Mesh(geo, [mat(roofColor), wallMat]);
-        mesh.castShadow = !this.lowSpec;
-        mesh.receiveShadow = true;
-        this.scene.add(mesh);
+        const wm = new THREE.Mesh(walls, new THREE.MeshLambertMaterial({ color: b.color, map: tex }));
+        const rm = new THREE.Mesh(roof, mat(roofColor));
+        for (const m of [wm, rm]) { m.castShadow = !this.lowSpec; m.receiveShadow = true; this.scene.add(m); }
       } else {
-        const wallKey = b.kind === 'house' ? 'houseWalls' : 'campusWalls';
-        batch.add('roofs', geo, roofColor, 0);
-        batch.add(wallKey, geo, b.color, 1);
+        batch.add(b.kind === 'house' ? 'houseWalls' : 'campusWalls', walls, b.color);
+        batch.add('roofs', roof, roofColor);
       }
       this.colliders.addPoly(b.wpts, b.id);
 
       const [cx, cy] = b.obb;
       b.center = [cx, -cy];
-      if (b.roof === 'gable') {
-        if (b.name) this.addGable(b.obb, b.height, b.roofColor || 0xb5523b);
-        else batch.add('roofs', gableGeometry(b.obb, b.height), b.roofColor || 0xb5523b);
-      }
-      if (b.id === 'chapel') this.addRoofCross(cx, cy, b.height);
+      if (b.id === 'chapel') this.addRoofCross(cx, cy, top);
       if (b.name) {
         const label = makeLabel(b.name, b.sub, { width: b.small ? 11 : 15 });
-        label.position.set(cx, b.height + (b.small ? 2.5 : 3.5), -cy);
+        label.position.set(cx, top + (b.small ? 2.5 : 3.5), -cy);
         this.scene.add(label);
         this.labels.push(label);
         this.addDoor(b);
@@ -346,30 +412,58 @@ export class World {
     }
     if (!best) return;
     const { mx, my, nx, ny } = best;
+    const gy = heightAtCampus(mx + nx * 1.5, my + ny * 1.5);
     const rot = Math.atan2(nx, -ny); // world heading of the outward normal (nx, -ny)
     const door = new THREE.Mesh(GEOM.box, mat(0x4a3424));
     door.scale.set(2.4, 3, 0.2);
-    door.position.set(mx + nx * 0.06, 1.5, -(my + ny * 0.06));
+    door.position.set(mx + nx * 0.06, gy + 1.5, -(my + ny * 0.06));
     door.rotation.y = rot;
     this.scene.add(door);
     const awning = new THREE.Mesh(GEOM.box, mat(0x1f3a6e));
     awning.scale.set(3.6, 0.2, 1.6);
-    awning.position.set(mx + nx * 0.8, 3.3, -(my + ny * 0.8));
+    awning.position.set(mx + nx * 0.8, gy + 3.3, -(my + ny * 0.8));
     awning.rotation.y = rot;
     this.scene.add(awning);
   }
 
-  // Pitched roof along an oriented box [cx, cy, w, h, angle]
-  addGable(box, height, color) {
-    const m = new THREE.Mesh(gableGeometry(box, height), mat(color));
-    m.castShadow = !this.lowSpec;
-    this.scene.add(m);
+  addRoofCross(x, y, top) {
+    const gold = mat(0xd4af37, { emissive: 0x332200 });
+    const v = new THREE.Mesh(GEOM.box, gold); v.scale.set(0.5, 5, 0.5); v.position.set(x, top + 2.5, -y); this.scene.add(v);
+    const hbar = new THREE.Mesh(GEOM.box, gold); hbar.scale.set(2.6, 0.5, 0.5); hbar.position.set(x, top + 3.6, -y); this.scene.add(hbar);
   }
 
-  addRoofCross(x, y, height) {
-    const gold = mat(0xd4af37, { emissive: 0x332200 });
-    const v = new THREE.Mesh(GEOM.box, gold); v.scale.set(0.5, 5, 0.5); v.position.set(x, height + 2.5, -y); this.scene.add(v);
-    const hbar = new THREE.Mesh(GEOM.box, gold); hbar.scale.set(2.6, 0.5, 0.5); hbar.position.set(x, height + 3.6, -y); this.scene.add(hbar);
+  // Lou Herwaldt Stadium: bleachers and a backstop behind home plate
+  buildStadium() {
+    const [hx, hy] = CAMPUS.diamond.bases[0], [sx, sy] = CAMPUS.diamond.bases[2];
+    const len = Math.hypot(sx - hx, sy - hy);
+    const dx = (sx - hx) / len, dy = (sy - hy) / len;
+    const cx = hx - dx * 9, cy = hy - dy * 9;
+    const g = new THREE.Group();
+    const steel = mat(0x8a95a5), seat = mat(0x1f3a6e);
+    // Rows rise away from the field (local +z); the backstop net sits on the field side
+    for (let k = 0; k < 4; k++) {
+      const step = new THREE.Mesh(GEOM.box, k % 2 ? steel : seat);
+      step.scale.set(22, 1.2 + k * 0.7, 1.4);
+      step.position.set(0, (0.6 + k * 0.7) / 2 - 0.3, -1 + 1.4 * k);
+      step.castShadow = !this.lowSpec;
+      g.add(step);
+    }
+    const net = new THREE.Mesh(GEOM.box, new THREE.MeshLambertMaterial({ color: 0x333333, transparent: true, opacity: 0.35 }));
+    net.scale.set(16, 6, 0.1); net.position.set(0, 3, -3); g.add(net);
+    g.position.set(cx, heightAtCampus(cx, cy), -cy);
+    // Local -z points at the field: world (dx, -dy) = (-sin θ, -cos θ)
+    const th = Math.atan2(-dx, dy);
+    g.rotation.y = th;
+    this.scene.add(g);
+    // Collider box around the stands and net
+    const ax = [Math.cos(th), -Math.sin(th)], az = [Math.sin(th), Math.cos(th)];
+    const corners = [[-11, -3.2], [11, -3.2], [11, 4], [-11, 4]].map(([a, b]) => [cx + ax[0] * a + az[0] * b, -cy + ax[1] * a + az[1] * b]);
+    this.colliders.addPoly(corners, 'bleachers');
+    const label = makeLabel('Lou Herwaldt Stadium', 'Reese Field', { width: 15 });
+    const [px, pz] = this.places.stadium;
+    label.position.set(px, groundY(px, pz) + 9, pz);
+    this.scene.add(label);
+    this.labels.push(label);
   }
 
   buildProps() {
@@ -379,19 +473,21 @@ export class World {
     const ang = road ? roadAngleAt(road.wpts, ex, ez) : 0;
     const sign = new THREE.Group();
     const wall = new THREE.Mesh(GEOM.box, mat(0xb9a98a));
-    wall.scale.set(10, 2.2, 1.2); wall.position.y = 1.1; wall.castShadow = true; sign.add(wall);
-    sign.position.set(ex, 0, ez);
+    wall.scale.set(10, 3, 1.2); wall.position.y = 1.1; wall.castShadow = true; sign.add(wall);
+    const ey = groundY(ex, ez);
+    sign.position.set(ex, ey, ez);
     sign.rotation.y = ang;
     this.scene.add(sign);
     const lbl = makeLabel("The Master's University", 'Placerita Canyon', { width: 9, bg: 'rgba(31,58,110,0.95)' });
-    lbl.position.set(ex, 3.6, ez); this.scene.add(lbl);
+    lbl.position.set(ex, ey + 3.6, ez); this.scene.add(lbl);
     for (const k of [-3, 0, 3]) this.colliders.addCircle(ex + Math.cos(ang) * k, ez - Math.sin(ang) * k, 1.4);
 
     // Prayer Hill: a wooden cross in a clearing ringed with rocks, open toward the trail
     const [hx, hz] = this.places.hill;
     const wood = mat(0x6b4a2b);
-    const v = new THREE.Mesh(GEOM.box, wood); v.scale.set(0.6, 9, 0.6); v.position.set(hx, 4.5, hz - 22); v.castShadow = true; this.scene.add(v);
-    const hb = new THREE.Mesh(GEOM.box, wood); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, 6.8, hz - 22); this.scene.add(hb);
+    const cy = groundY(hx, hz - 22);
+    const v = new THREE.Mesh(GEOM.box, wood); v.scale.set(0.6, 10, 0.6); v.position.set(hx, cy + 4, hz - 22); v.castShadow = true; this.scene.add(v);
+    const hb = new THREE.Mesh(GEOM.box, wood); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, cy + 6.8, hz - 22); this.scene.add(hb);
     this.colliders.addCircle(hx, hz - 22, 1);
     const [bx, bz] = this.places.hillBase;
     const gap = Math.atan2(bz - hz, bx - hx);
@@ -406,13 +502,13 @@ export class World {
       const m = new THREE.Mesh(GEOM.sphere, rock);
       const sc = 3 + ((i * 37) % 5) * 0.4;
       m.scale.set(sc, sc * 0.7, sc);
-      m.position.set(x, sc * 0.2, z);
+      m.position.set(x, groundY(x, z) + sc * 0.1, z);
       m.castShadow = !this.lowSpec;
       this.scene.add(m);
       this.colliders.addCircle(x, z, sc * 0.5);
     }
     const hl = makeLabel('Prayer Hill', null, { width: 9, bg: 'rgba(90,60,30,0.85)' });
-    hl.position.set(hx, 12, hz - 22);
+    hl.position.set(hx, cy + 13, hz - 22);
     this.scene.add(hl);
     this.labels.push(hl);
   }
@@ -456,9 +552,48 @@ export class World {
         blade.rotation.y = sgn.angles[i]; // local x along the street
         g.add(blade);
       });
-      g.position.set(x, 0, z);
+      g.position.set(x, groundY(x, z), z);
       this.scene.add(g);
       this.colliders.addCircle(x, z, 0.25);
+    }
+  }
+
+  // Red octagonal stop signs where the map has them, facing the traffic they stop
+  buildStopSigns() {
+    if (!CAMPUS.stops || !CAMPUS.stops.length) return;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    const oct = (r) => {
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = Math.PI / 8 + (i * Math.PI) / 4;
+        ctx.lineTo(64 + Math.cos(a) * r, 64 + Math.sin(a) * r);
+      }
+      ctx.closePath();
+    };
+    ctx.fillStyle = '#ffffff'; oct(63); ctx.fill();
+    ctx.fillStyle = '#c4161c'; oct(57); ctx.fill();
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 38px Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('STOP', 64, 66, 110);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const face = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.5 });
+    const back = mat(0x9a9ea3);
+    const plate = new THREE.PlaneGeometry(0.9, 0.9);
+    const pole = mat(0x7d8288);
+    for (const [sx, sy, facing] of CAMPUS.stops) {
+      const [x, z] = W([sx, sy]);
+      const g = new THREE.Group();
+      const post = new THREE.Mesh(GEOM.cyl, pole);
+      post.scale.set(0.09, 2.4, 0.09); post.position.y = 1.2; g.add(post);
+      const f = new THREE.Mesh(plate, face); f.position.set(0, 2.4, 0.06); g.add(f);
+      const b = new THREE.Mesh(plate, back); b.rotation.y = Math.PI; b.position.set(0, 2.4, 0.05); g.add(b);
+      g.position.set(x, groundY(x, z), z);
+      // facing: campus-space direction the sign's face points toward (at oncoming drivers)
+      g.rotation.y = Math.atan2(Math.cos(facing), -Math.sin(facing));
+      this.scene.add(g);
+      this.colliders.addCircle(x, z, 0.2);
     }
   }
 
@@ -470,37 +605,31 @@ export class World {
       [[b.minX, b.minZ], [b.maxX, b.minZ]], [[b.maxX, b.minZ], [b.maxX, b.maxZ]],
       [[b.maxX, b.maxZ], [b.minX, b.maxZ]], [[b.minX, b.maxZ], [b.minX, b.minZ]],
     ];
+    // Short sections that follow the ground
+    const pieces = [];
     for (const [a, c] of sides) {
       const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
-      const m = new THREE.Mesh(GEOM.box, fence);
-      m.scale.set(len, 1.2, 0.3);
-      m.position.set((a[0] + c[0]) / 2, 0.6, (a[1] + c[1]) / 2);
-      m.rotation.y = -Math.atan2(c[1] - a[1], c[0] - a[0]);
-      this.scene.add(m);
+      const n = Math.ceil(len / 6);
+      for (let i = 0; i < n; i++) {
+        const p = [a[0] + ((c[0] - a[0]) * i) / n, a[1] + ((c[1] - a[1]) * i) / n];
+        const q = [a[0] + ((c[0] - a[0]) * (i + 1)) / n, a[1] + ((c[1] - a[1]) * (i + 1)) / n];
+        pieces.push([p, q]);
+      }
     }
+    const inst = new THREE.InstancedMesh(GEOM.box, fence, pieces.length);
+    const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, 'YXZ'), v = new THREE.Vector3(), sc = new THREE.Vector3();
+    pieces.forEach(([p, q], i) => {
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      const hp = groundY(p[0], p[1]), hq = groundY(q[0], q[1]);
+      e.set(0, -Math.atan2(q[1] - p[1], q[0] - p[0]), Math.atan2(hq - hp, len));
+      m4.compose(v.set((p[0] + q[0]) / 2, (hp + hq) / 2 + 0.5, (p[1] + q[1]) / 2), q4.setFromEuler(e), sc.set(Math.hypot(len, hq - hp) + 0.05, 1.4, 0.3));
+      inst.setMatrixAt(i, m4);
+    });
+    this.scene.add(inst);
     this.colliders.addPoly([[b.minX - 50, b.minZ - 50], [b.maxX + 50, b.minZ - 50], [b.maxX + 50, b.minZ - t], [b.minX - 50, b.minZ - t]]);
     this.colliders.addPoly([[b.minX - 50, b.maxZ + t], [b.maxX + 50, b.maxZ + t], [b.maxX + 50, b.maxZ + 50], [b.minX - 50, b.maxZ + 50]]);
     this.colliders.addPoly([[b.minX - 50, b.minZ - 50], [b.minX - t, b.minZ - 50], [b.minX - t, b.maxZ + 50], [b.minX - 50, b.maxZ + 50]]);
     this.colliders.addPoly([[b.maxX + t, b.minZ - 50], [b.maxX + 50, b.minZ - 50], [b.maxX + 50, b.maxZ + 50], [b.maxX + t, b.maxZ + 50]]);
-  }
-
-  // Is this campus-space point clear for scenery?
-  isOpen(x, y, margin) {
-    if (this.colliders.pointBlocked(x, -y, margin + 1)) return false;
-    for (const r of this.data.roads) if (distToPolyline(x, y, r.pts) < r.width / 2 + margin) return false;
-    for (const l of this.data.lots) if (pointInPoly(x, y, l.poly) || distToPolyEdge(x, y, l.poly).d < margin) return false;
-    for (const lawn of this.data.lawns) {
-      if (lawn.kind === 'campus' || lawn.kind === 'grass') continue;
-      if (pointInPoly(x, y, lawn.poly) || distToPolyEdge(x, y, lawn.poly).d < margin) return false;
-    }
-    for (const w of this.data.washes) if (distToPolyline(x, y, w.pts) < w.width / 2 + margin) return false;
-    const [hx, hy] = this.data.places.hill;
-    if (Math.hypot(x - hx, y - hy) < 40) return false;
-    for (const key of ['quad', 'spawn', 'herwaldtLawn', 'northLawn']) {
-      const [px, py] = this.data.places[key];
-      if (Math.hypot(x - px, y - py) < 10) return false;
-    }
-    return true;
   }
 
   inCampus(x, z) {
@@ -508,125 +637,177 @@ export class World {
     return false;
   }
 
+  // ---------- trees, shrubs and structures ----------
+
+  // Every tree the LiDAR found, at its real spot, height and crown size
   buildTrees() {
     const rng = mulberry32(1961);
-    const b = this.data.bounds;
-    const oaks = [], palms = [], bushes = [];
-    const count = this.lowSpec ? 230 : 420;
-    let tries = 0;
-    while (oaks.length + palms.length < count && tries++ < 12000) {
-      const x = b.minX + 6 + rng() * (b.maxX - b.minX - 12);
-      const y = b.minY + 6 + rng() * (b.maxY - b.minY - 12);
-      // The hillside south of campus is chaparral, not trees
-      if (y < -175 && !this.inCampus(x, -y)) continue;
-      if (!this.isOpen(x, y, 3)) continue;
-      // Palms line the streets; oaks everywhere else
-      let nearStreet = false;
-      for (const r of this.namedRoads) if (distToPolyline(x, y, r.pts) < 13) { nearStreet = true; break; }
-      const list = nearStreet && rng() < 0.5 ? palms : oaks;
-      list.push([x, y, 0.75 + rng() * 0.6, rng() * Math.PI * 2]);
+    const broad = [], palms = [], conifers = [];
+    for (const t of TREES) {
+      const [tx, ty, h, r, kind, cb, dx, dy] = t;
+      const [x, z] = W([tx, ty]);
+      const g = groundY(x, z);
+      const tree = { x, z, g, h, r, cb: Math.max(0.12, Math.min(0.75, cb)) * h, cx: x + dx, cz: z - dy, rot: rng() * Math.PI * 2, c: rng() };
+      (kind === 1 ? palms : kind === 2 ? conifers : broad).push(tree);
+      if (this.inBounds(x, z, -2)) this.colliders.addCircle(x, z, Math.min(0.9, 0.3 + h * 0.025), 'tree');
     }
-    // Chaparral on the hills
-    tries = 0;
-    const nb = this.lowSpec ? 140 : 320;
-    while (bushes.length < nb && tries++ < 6000) {
-      const x = b.minX + 4 + rng() * (b.maxX - b.minX - 8);
-      const y = b.minY + 4 + rng() * (-170 - b.minY);
-      if (this.inCampus(x, -y) || !this.isOpen(x, y, 1.5)) continue;
-      bushes.push([x, y, 0.8 + rng() * 1.2]);
-    }
-    // Scenery outside the fence (no collision)
+    // Scenery beyond the LiDAR area: oaks in the canyons around (no collision)
     const outside = [];
-    for (let i = 0; i < (this.lowSpec ? 120 : 260); i++) {
-      const ang = rng() * Math.PI * 2;
-      const rad = 470 + rng() * 260;
-      outside.push([-30 + Math.cos(ang) * rad, Math.sin(ang) * rad * 0.85, 0.8 + rng() * 0.8, rng() * 6]);
+    const nOut = this.lowSpec ? 220 : 520;
+    for (let tries = 0; outside.length < nOut && tries < 20000; tries++) {
+      const a = rng() * Math.PI * 2, rad = 420 + rng() * 900;
+      const x = -30 + Math.cos(a) * rad, y = Math.sin(a) * rad;
+      if (inCore(x, y)) continue;
+      // Oaks favor the canyon bottoms
+      const h0 = heightAtCampus(x, y), around = (heightAtCampus(x + 40, y) + heightAtCampus(x - 40, y) + heightAtCampus(x, y + 40) + heightAtCampus(x, y - 40)) / 4;
+      if (h0 > around + 2 && rng() < 0.8) continue;
+      const h = 6 + rng() * 7;
+      outside.push({ x, z: -y, g: h0, h, r: 2.5 + rng() * 3, cb: h * 0.3, cx: x, cz: -y, rot: rng() * 6, c: rng() });
     }
-    const trunkGeo = new THREE.CylinderGeometry(0.35, 0.5, 1, 6).translate(0, 0.5, 0);
-    const crownGeo = new THREE.IcosahedronGeometry(1, 0);
-    const trunkMat = mat(0x6b4f33);
-    const crownMat = mat(0x4f7a3a);
-    const crownMat2 = mat(0x6a8a3f);
-    const all = oaks.concat(outside);
-    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, all.length);
-    const crowns = new THREE.InstancedMesh(crownGeo, crownMat, all.length);
+    const all = broad.concat(outside);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
-    all.forEach(([x, y, s, rot], i) => {
-      const z = -y;
-      q.setFromAxisAngle(up, rot);
-      m4.compose(v.set(x, 0, z), q, sc.set(s, 3.2 * s, s)); trunks.setMatrixAt(i, m4);
-      m4.compose(v.set(x, 4.2 * s, z), q, sc.set(4 * s, 2.8 * s, 4 * s)); crowns.setMatrixAt(i, m4);
-      if (i < oaks.length) this.colliders.addCircle(x, z, 0.7 * s);
-    });
-    trunks.castShadow = crowns.castShadow = !this.lowSpec;
-    this.scene.add(trunks, crowns);
-    // Lighter second crown layer for a bit of variety
-    const crowns2 = new THREE.InstancedMesh(crownGeo, crownMat2, oaks.length);
-    oaks.forEach(([x, y, s, rot], i) => {
-      q.setFromAxisAngle(up, rot + 1);
-      m4.compose(v.set(x + 0.8 * s, 5.2 * s, -y + 0.5 * s), q, sc.set(2.6 * s, 2 * s, 2.6 * s));
-      crowns2.setMatrixAt(i, m4);
-    });
-    this.scene.add(crowns2);
+    const up = new THREE.Vector3(0, 1, 0), dir = new THREE.Vector3(), col = new THREE.Color();
+    const shadow = !this.lowSpec;
 
-    // Palms
-    const pTrunk = new THREE.CylinderGeometry(0.22, 0.32, 1, 6).translate(0, 0.5, 0);
-    const frond = new THREE.ConeGeometry(0.6, 3.6, 4).rotateX(Math.PI / 2).translate(0, 0, 1.6);
-    const ptr = new THREE.InstancedMesh(pTrunk, mat(0x8a6d4d), palms.length);
-    const pfr = new THREE.InstancedMesh(frond, mat(0x3f7a35), palms.length * 6);
-    palms.forEach(([x, y, s], i) => {
-      const h = 9 + s * 5;
-      m4.compose(v.set(x, 0, -y), q.identity(), sc.set(1, h, 1)); ptr.setMatrixAt(i, m4);
-      for (let k = 0; k < 6; k++) {
-        const e = new THREE.Euler(0.35, (k / 6) * Math.PI * 2 + s, 0, 'YXZ');
-        q.setFromEuler(e);
-        m4.compose(v.set(x, h, -y), q, sc.set(1, 1, 1));
-        pfr.setMatrixAt(i * 6 + k, m4);
-      }
-      this.colliders.addCircle(x, -y, 0.45);
+    // Broadleaf: trunk leaning toward the crown, then two leafy blobs
+    const trunkGeo = new THREE.CylinderGeometry(0.7, 1, 1, 6).translate(0, 0.5, 0);
+    const crownGeo = new THREE.IcosahedronGeometry(1, this.lowSpec ? 0 : 1);
+    const trunks = new THREE.InstancedMesh(trunkGeo, mat(0x6b4f33), all.length);
+    const crowns = new THREE.InstancedMesh(crownGeo, fadeNearCamera(new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true })), all.length * 2);
+    const leaf = [new THREE.Color(0x4f7a3a), new THREE.Color(0x667f3c), new THREE.Color(0x3f6b35), new THREE.Color(0x7a8a4a)];
+    let ci = 0;
+    all.forEach((t, i) => {
+      const crownH = Math.max(1.6, t.h - t.cb);
+      const midY = t.g + t.cb + crownH / 2;
+      dir.set(t.cx - t.x, t.cb + crownH * 0.3, t.cz - t.z);
+      const L = dir.length();
+      q.setFromUnitVectors(up, dir.normalize());
+      const tw = 0.18 + t.h * 0.022;
+      m4.compose(v.set(t.x, t.g - 0.3, t.z), q, sc.set(tw, L + 0.3, tw));
+      trunks.setMatrixAt(i, m4);
+      q.setFromAxisAngle(up, t.rot);
+      m4.compose(v.set(t.cx, midY, t.cz), q, sc.set(t.r, crownH / 2, t.r * 0.92));
+      crowns.setMatrixAt(ci, m4);
+      col.copy(leaf[Math.floor(t.c * leaf.length)]).multiplyScalar(0.9 + t.c * 0.2);
+      crowns.setColorAt(ci++, col);
+      const off = t.r * 0.35;
+      m4.compose(v.set(t.cx + Math.cos(t.rot) * off, midY + crownH * 0.22, t.cz + Math.sin(t.rot) * off), q, sc.set(t.r * 0.7, crownH * 0.36, t.r * 0.7));
+      crowns.setMatrixAt(ci, m4);
+      col.multiplyScalar(1.12);
+      crowns.setColorAt(ci++, col);
     });
+    crowns.count = ci;
+    trunks.castShadow = crowns.castShadow = shadow;
+    this.scene.add(trunks, crowns);
+
+    // Palms: tall bare trunk with a head of fronds
+    const pTrunk = new THREE.CylinderGeometry(0.2, 0.3, 1, 6).translate(0, 0.5, 0);
+    const frond = new THREE.ConeGeometry(0.45, 1, 4).rotateX(Math.PI / 2).translate(0, 0, 0.5);
+    const ptr = new THREE.InstancedMesh(pTrunk, mat(0x8a6d4d), palms.length);
+    const pfr = new THREE.InstancedMesh(frond, fadeNearCamera(new THREE.MeshLambertMaterial({ color: 0x3f7a35 })), palms.length * 8);
+    const e = new THREE.Euler(0, 0, 0, 'YXZ');
+    palms.forEach((t, i) => {
+      const top = t.h - 0.8;
+      m4.compose(v.set(t.x, t.g - 0.2, t.z), q.identity(), sc.set(1, top + 0.2, 1)); ptr.setMatrixAt(i, m4);
+      const fl = Math.max(2.4, t.r * 1.15);
+      for (let k = 0; k < 8; k++) {
+        e.set(0.25 + (k % 2) * 0.3, (k / 8) * Math.PI * 2 + t.rot, 0);
+        q.setFromEuler(e);
+        m4.compose(v.set(t.x, t.g + top, t.z), q, sc.set(1, 1, fl));
+        pfr.setMatrixAt(i * 8 + k, m4);
+      }
+    });
+    ptr.castShadow = pfr.castShadow = shadow;
     this.scene.add(ptr, pfr);
 
-    // Bushes (walk-through)
-    const bush = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), mat(0x6f7a45), bushes.length);
-    bushes.forEach(([x, y, s], i) => {
-      m4.compose(v.set(x, s * 0.35, -y), q.setFromAxisAngle(up, s * 5), sc.set(s * 1.3, s * 0.8, s * 1.1));
-      bush.setMatrixAt(i, m4);
+    // Conifers (pines, cedars, cypress): narrow cones
+    const cone = new THREE.ConeGeometry(1, 1, 7).translate(0, 0.5, 0);
+    const ctr = new THREE.InstancedMesh(trunkGeo, mat(0x5a4330), conifers.length);
+    const cco = new THREE.InstancedMesh(cone, fadeNearCamera(new THREE.MeshLambertMaterial({ color: 0x35583a, flatShading: true })), conifers.length);
+    conifers.forEach((t, i) => {
+      m4.compose(v.set(t.x, t.g - 0.2, t.z), q.identity(), sc.set(0.25, t.cb + 1.2, 0.25)); ctr.setMatrixAt(i, m4);
+      m4.compose(v.set(t.cx, t.g + t.cb, t.cz), q.setFromAxisAngle(up, t.rot), sc.set(t.r, t.h - t.cb, t.r)); cco.setMatrixAt(i, m4);
     });
-    this.scene.add(bush);
+    ctr.castShadow = cco.castShadow = shadow;
+    this.scene.add(ctr, cco);
+
+    this.buildShrubs(rng);
   }
 
-  buildHills() {
-    // San Gabriel foothills around Placerita Canyon, steepest to the south
-    const rng = mulberry32(91321);
-    const geo = new THREE.IcosahedronGeometry(1, 1);
-    const n = 46;
-    const hills = new THREE.InstancedMesh(geo, mat(0xa8925f), n + 12);
-    const hills2 = new THREE.InstancedMesh(geo, mat(0x8c8a55), n + 12);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
-    let i1 = 0, i2 = 0;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + rng() * 0.1;
-      const rad = 700 + rng() * 200;
-      const x = -30 + Math.cos(a) * rad, z = Math.sin(a) * rad * 0.85;
-      const r = 110 + rng() * 120;
-      const h = 60 + rng() * 120;
-      m4.compose(v.set(x, -10, z), q.setFromAxisAngle(up, rng() * 3), sc.set(r, h, r * 0.8));
-      if (i % 2) hills.setMatrixAt(i1++, m4); else hills2.setMatrixAt(i2++, m4);
+  // Chaparral, hedges and brush where the LiDAR found low vegetation (walk-through)
+  buildShrubs(rng) {
+    const g = CORE;
+    const bushes = [];
+    const max = this.lowSpec ? 1800 : 4500;
+    for (let y = g.y0 + 2; y < g.y1 - 2; y += 4) {
+      for (let x = g.x0 + 2; x < g.x1 - 2; x += 4) {
+        const d = shrubAt(x, y);
+        if (d < 0.2 || rng() > d * 0.85) continue;
+        const px = x + (rng() - 0.5) * 3, py = y + (rng() - 0.5) * 3;
+        const [wx, wz] = W([px, py]);
+        if (this.colliders.pointBlocked(wx, wz, 0.8) || this.onRoad(wx, wz, true)) continue;
+        bushes.push([wx, wz, 0.7 + d * 1.3 + rng() * 0.5, rng()]);
+      }
     }
-    // The ridge right behind campus (Prayer Hill side)
-    for (let i = 0; i < 12; i++) {
-      const x = -460 + i * 80 + rng() * 30;
-      const z = 470 + rng() * 60;
-      const r = 70 + rng() * 50;
-      m4.compose(v.set(x, -14, z), q.setFromAxisAngle(up, rng() * 3), sc.set(r, 45 + rng() * 45, r * 0.9));
-      if (i % 2) hills.setMatrixAt(i1++, m4); else hills2.setMatrixAt(i2++, m4);
+    // Brush on the mountains outside the LiDAR area
+    const nOut = this.lowSpec ? 500 : 1400;
+    for (let i = 0; i < nOut; i++) {
+      const a = rng() * Math.PI * 2, rad = 420 + rng() * 800;
+      const x = -30 + Math.cos(a) * rad, y = Math.sin(a) * rad;
+      if (inCore(x, y)) continue;
+      bushes.push([x, -y, 2 + rng() * 2.5, rng()]);
     }
-    hills.count = i1; hills2.count = i2;
-    this.scene.add(hills, hills2);
+    // Keep the closest to campus if there are too many
+    if (bushes.length > max) {
+      bushes.sort((a, b) => Math.hypot(a[0] + 30, a[1]) - Math.hypot(b[0] + 30, b[1]));
+      bushes.length = max;
+    }
+    const inst = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), bushes.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    const shades = [new THREE.Color(0x6f7a45), new THREE.Color(0x5f6b3e), new THREE.Color(0x857f50), new THREE.Color(0x76844a)];
+    bushes.forEach(([x, z, s, c], i) => {
+      m4.compose(v.set(x, groundY(x, z) + s * 0.3, z), q.setFromAxisAngle(up, c * 9), sc.set(s * 1.2, s * 0.75, s * 1.05));
+      inst.setMatrixAt(i, m4);
+      inst.setColorAt(i, shades[Math.floor(c * shades.length)]);
+    });
+    this.scene.add(inst);
   }
+
+  // Carports, sheds and other structures the LiDAR sees that the map doesn't have
+  buildStructures() {
+    const boxes = [], tops = [], posts = [];
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    for (const [cx, cy, len, wid, ang, h] of STRUCTURES) {
+      const [x, z] = W([cx, cy]);
+      const gy = groundY(x, z);
+      const inLot = this.lots.some((l) => pointInPoly(x, z, l.wpts));
+      q.setFromAxisAngle(up, ang); // local x along the long side
+      const c = Math.cos(ang), s = Math.sin(ang);
+      const at = (a, b) => [x + a * c - b * s, z - (a * s + b * c)]; // local (a, b) -> world
+      if (inLot || len > 14) {
+        // Open carport / shade canopy: roof on posts, drive under it
+        tops.push(m4.compose(v.set(x, gy + h - 0.15, z), q, sc.set(len, 0.3, wid)).clone());
+        for (const sx of [-0.45, 0.45]) for (const sz of [-0.42, 0.42]) {
+          const [px, pz] = at(sx * len, sz * wid);
+          const pg = groundY(px, pz);
+          posts.push(m4.compose(v.set(px, (pg + gy + h) / 2, pz), q, sc.set(0.25, gy + h - pg, 0.25)).clone());
+          this.colliders.addCircle(px, pz, 0.25);
+        }
+      } else {
+        boxes.push(m4.compose(v.set(x, gy + (h - 1) / 2, z), q, sc.set(len, h + 1, wid)).clone());
+        this.colliders.addPoly([at(-len / 2, -wid / 2), at(len / 2, -wid / 2), at(len / 2, wid / 2), at(-len / 2, wid / 2)], 'structure');
+      }
+    }
+    for (const [list, color] of [[boxes, 0x9a9a92], [tops, 0x7d7f80], [posts, 0x6c6e70]]) {
+      if (!list.length) continue;
+      const inst = new THREE.InstancedMesh(GEOM.box, mat(color), list.length);
+      list.forEach((m, i) => inst.setMatrixAt(i, m));
+      inst.castShadow = !this.lowSpec; inst.receiveShadow = true;
+      this.scene.add(inst);
+    }
+  }
+
+  // ---------- traffic ----------
 
   buildLaneHints() {
     // Driving lanes for AI traffic (right-hand traffic)
@@ -678,9 +859,9 @@ export class World {
     return runs;
   }
 
-  onRoad(x, z) {
+  onRoad(x, z, withPaths = false) {
     for (const r of this.roads) {
-      if (r.kind === 'path' || r.kind === 'trail') continue;
+      if (!withPaths && (r.kind === 'path' || r.kind === 'trail')) continue;
       if (distToPolyline(x, z, r.wpts) < r.width / 2) return true;
     }
     return false;
@@ -726,16 +907,82 @@ export class World {
 
 // ---------- geometry helpers ----------
 
-// Pitched-roof geometry in world space for an oriented box [cx, cy, w, h, angle]
-function gableGeometry([cx, cy, w, h, a], height) {
-  const span = h, len = w;
-  const rise = Math.min(4, span * 0.32);
-  const tri = new THREE.Shape([new THREE.Vector2(-span / 2 - 0.5, 0), new THREE.Vector2(span / 2 + 0.5, 0), new THREE.Vector2(0, rise)]);
-  const geo = new THREE.ExtrudeGeometry(tri, { depth: len + 1, bevelEnabled: false });
-  geo.translate(0, 0, -(len + 1) / 2);
-  // ridge (local +z) along the long side: campus direction (cos a, sin a) -> world (cos a, -sin a)
-  geo.rotateY(Math.atan2(Math.cos(a), -Math.sin(a)));
-  geo.translate(cx, height, -cy);
+// Cut away foliage right around the camera so a tree crown never hides the player
+function fadeNearCamera(material, radius = 6.5) {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = 'varying vec3 vFadeWP;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+      vec4 fadeP = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        fadeP = instanceMatrix * fadeP;
+      #endif
+      vFadeWP = (modelMatrix * fadeP).xyz;`);
+    shader.fragmentShader = 'varying vec3 vFadeWP;\n' + shader.fragmentShader.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+      if (distance(vFadeWP, cameraPosition) < ${radius.toFixed(1)}) discard;`);
+  };
+  return material;
+}
+
+// Walls and roof for one building, from its LiDAR roof (or a flat fallback)
+function buildingGeometry(b, roof) {
+  if (!roof) {
+    let base = Infinity;
+    for (const [x, y] of b.poly) base = Math.min(base, heightAtCampus(x, y));
+    base -= 0.3;
+    roof = { base, n: b.poly.length, verts: b.poly.map(([x, y]) => [x, y, base + 0.3 + b.height]), tris: null, pitched: false };
+  }
+  const { base, n, verts } = roof;
+  const wall = { pos: [], nrm: [], uv: [] };
+  let s = 0;
+  for (let k = 0; k < n; k++) {
+    const a = verts[k], c = verts[(k + 1) % n];
+    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    if (len < 1e-3) continue;
+    // Outward normal for a counter-clockwise ring (campus space), in world space
+    const nx = (c[1] - a[1]) / len, nz = (c[0] - a[0]) / len;
+    const A0 = [a[0], base, -a[1]], C0 = [c[0], base, -c[1]], A1 = [a[0], a[2], -a[1]], C1 = [c[0], c[2], -c[1]];
+    const uA = s / 1, uC = (s + len) / 1;
+    pushTri(wall, [A0, C0, C1], [[uA, 0], [uC, 0], [uC, c[2] - base]], [nx, 0, nz]);
+    pushTri(wall, [A0, C1, A1], [[uA, 0], [uC, c[2] - base], [uA, a[2] - base]], [nx, 0, nz]);
+    s += len;
+  }
+  const rf = { pos: [], nrm: [], uv: [] };
+  let top = -Infinity;
+  for (const v of verts) top = Math.max(top, v[2]);
+  if (roof.tris) {
+    for (let i = 0; i < roof.tris.length; i += 3) {
+      const p = [roof.tris[i], roof.tris[i + 1], roof.tris[i + 2]].map((k) => [verts[k][0], verts[k][2], -verts[k][1]]);
+      pushTri(rf, p, [[0, 0], [0, 0], [0, 0]], [0, 1, 0], true);
+    }
+  } else {
+    const shape = new THREE.Shape(verts.map(([x, y]) => new THREE.Vector2(x, y)));
+    const tris = THREE.ShapeUtils.triangulateShape(shape.getPoints(), []);
+    for (const t of tris) pushTri(rf, t.map((k) => [verts[k][0], verts[k][2], -verts[k][1]]), [[0, 0], [0, 0], [0, 0]], [0, 1, 0], true);
+  }
+  return { walls: toGeometry(wall), roof: toGeometry(rf), top, base, pitched: roof.pitched };
+}
+
+// Add a triangle facing `want` (flips the winding if needed); flat normal
+function pushTri(buf, p, uv, want, faceNormal = false) {
+  const ux = p[1][0] - p[0][0], uy = p[1][1] - p[0][1], uz = p[1][2] - p[0][2];
+  const vx = p[2][0] - p[0][0], vy = p[2][1] - p[0][1], vz = p[2][2] - p[0][2];
+  let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  let order = [0, 1, 2];
+  if (nx * want[0] + ny * want[1] + nz * want[2] < 0) { order = [0, 2, 1]; nx = -nx; ny = -ny; nz = -nz; }
+  const l = Math.hypot(nx, ny, nz) || 1;
+  const n = faceNormal ? [nx / l, ny / l, nz / l] : want;
+  for (const k of order) {
+    buf.pos.push(p[k][0], p[k][1], p[k][2]);
+    buf.nrm.push(n[0], n[1], n[2]);
+    buf.uv.push(uv[k][0], uv[k][1]);
+  }
+}
+
+function toGeometry(buf) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(buf.pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(buf.nrm, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uv, 2));
+  geo.computeBoundingSphere();
   return geo;
 }
 
@@ -743,21 +990,13 @@ function gableGeometry([cx, cy, w, h, a], height) {
 class Batcher {
   constructor() { this.parts = new Map(); }
 
-  // group: index of the geometry group to take (e.g. ExtrudeGeometry 0 = caps, 1 = sides), or null for all
-  add(key, geo, color, group = null) {
+  add(key, geo, color) {
     const g = geo.index ? geo.toNonIndexed() : geo;
-    let start = 0, count = g.getAttribute('position').count;
-    if (group != null && g.groups.length) {
-      const gr = g.groups.filter((x) => x.materialIndex === group);
-      if (!gr.length) return;
-      // ExtrudeGeometry emits one contiguous range per group
-      start = gr[0].start; count = gr.reduce((n, x) => n + x.count, 0);
-    }
     let p = this.parts.get(key);
     if (!p) this.parts.set(key, (p = { pos: [], nrm: [], uv: [], col: [] }));
     const pos = g.getAttribute('position'), nrm = g.getAttribute('normal'), uv = g.getAttribute('uv');
     const c = new THREE.Color(color);
-    for (let i = start; i < start + count; i++) {
+    for (let i = 0; i < pos.count; i++) {
       p.pos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
       if (nrm) p.nrm.push(nrm.getX(i), nrm.getY(i), nrm.getZ(i)); else p.nrm.push(0, 1, 0);
       if (uv) p.uv.push(uv.getX(i), uv.getY(i)); else p.uv.push(0, 0);
@@ -806,60 +1045,6 @@ function roadAngleAt(pts, x, z) {
     if (d < bd) { bd = d; best = Math.atan2(-(b[1] - a[1]), b[0] - a[0]); }
   }
   return best;
-}
-
-function polyGeometry(poly) {
-  const shape = new THREE.Shape(poly.map(([x, y]) => new THREE.Vector2(x, y)));
-  return new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2);
-}
-
-// Flat ribbon along a world-space polyline [[x,z],...]
-function ribbonGeometry(pts, width, loop) {
-  const half = width / 2;
-  const n = pts.length;
-  const pos = [], idx = [];
-  const count = loop ? n + 1 : n;
-  for (let k = 0; k < count; k++) {
-    const i = k % n;
-    const prev = loop ? pts[(i - 1 + n) % n] : pts[Math.max(0, i - 1)];
-    const next = loop ? pts[(i + 1) % n] : pts[Math.min(n - 1, i + 1)];
-    let dx = next[0] - prev[0], dz = next[1] - prev[1];
-    const l = Math.hypot(dx, dz) || 1;
-    dx /= l; dz /= l;
-    const nx = -dz, nz = dx;
-    // Miter scale
-    let miter = 1;
-    if ((loop || (i > 0 && i < n - 1))) {
-      const a = pts[(i - 1 + n) % n];
-      const d1x = pts[i][0] - a[0], d1z = pts[i][1] - a[1];
-      const l1 = Math.hypot(d1x, d1z) || 1;
-      const n1x = -d1z / l1, n1z = d1x / l1;
-      miter = 1 / Math.max(0.5, nx * n1x + nz * n1z);
-    }
-    const p = pts[i];
-    pos.push(p[0] + nx * half * miter, 0, p[1] + nz * half * miter);
-    pos.push(p[0] - nx * half * miter, 0, p[1] - nz * half * miter);
-    if (k > 0) {
-      const a = (k - 1) * 2, b = k * 2;
-      idx.push(a, b, a + 1, a + 1, b, b + 1);
-    }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  // Ensure normals face up
-  const nrm = geo.getAttribute('normal');
-  for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);
-  // Fix winding so the top face is visible
-  const index = geo.getIndex();
-  for (let i = 0; i < index.count; i += 3) {
-    const a = index.getX(i), b = index.getX(i + 1), c = index.getX(i + 2);
-    const ax = pos[a * 3], az = pos[a * 3 + 2], bx = pos[b * 3], bz = pos[b * 3 + 2], cx = pos[c * 3], cz = pos[c * 3 + 2];
-    const cross = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
-    if (cross > 0) { index.setX(i + 1, c); index.setX(i + 2, b); }
-  }
-  return geo;
 }
 
 // Offset a world polyline to the right of travel direction (right-hand traffic)

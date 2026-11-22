@@ -251,6 +251,30 @@ for r, ln in named:
         if any(math.hypot(s['x'] - q.x, s['y'] - q.y) < 60 for s in signs): continue
         signs.append({'x': R(q.x), 'y': R(q.y), 'names': [r['short']], 'angles': [round(a, 3)]})
 
+# ---------------------------------------------------------------- stop signs (highway=stop nodes)
+# The sign stands on the minor road, just before it meets the street, facing its drivers
+way_nodes = {w.get('id'): [r.get('ref') for r in w.findall('nd')] for w in root.findall('way')}
+stops = []
+for nd in root.findall('node'):
+    if not any(t.get('k') == 'highway' and t.get('v') == 'stop' for t in nd.findall('tag')):
+        continue
+    nid = nd.get('id')
+    cands = [(wid, refs) for wid, refs in way_nodes.items() if nid in refs and ways[wid][0].get('highway') and ways[wid][0].get('highway') != 'residential']
+    cands = [(wid, refs) for wid, refs in cands if refs.index(nid) in (0, len(refs) - 1)] or cands
+    if not cands: continue
+    wid, refs = cands[0]
+    k = refs.index(nid)
+    nxt = refs[1] if k == 0 else refs[k - 1]
+    if nxt not in nodes: continue
+    (x0, y0), (x1, y1) = nodes[nid], nodes[nxt]
+    L = math.hypot(x0 - x1, y0 - y1) or 1
+    tx, ty = (x0 - x1) / L, (y0 - y1) / L  # travel direction, toward the street
+    back = min(8.0, L * 0.8)
+    w = WIDTH['service'] / 2 + 0.9
+    sx, sy = x0 - tx * back + ty * w, y0 - ty * back - tx * w
+    if INSIDE.contains(Point(sx, sy)):
+        stops.append([R(sx), R(sy), round(math.atan2(-ty, -tx), 3)])
+
 # ---------------------------------------------------------------- lots and parking stalls
 aisles = [ln for r, ln in road_geoms if r['kind'] == 'aisle']
 lot_shapes = [ln.buffer(8.5, cap_style=2) for ln in aisles]
@@ -328,6 +352,7 @@ out = {
     'campus': [ring(g.simplify(0.8)) for g in campus_parts],
     'roads': roads,
     'signs': signs,
+    'stops': stops,
     'lawns': lawns,
     'lots': lots,
     'stalls': stalls,
@@ -480,6 +505,7 @@ parts = [
     dump_list('campus', out['campus']),
     dump_list('roads', out['roads']),
     dump_list('signs', out['signs']),
+    f"  stops: {json.dumps(out['stops'])},\n",
     dump_list('lawns', out['lawns']),
     f"  diamond: {json.dumps(out['diamond'], separators=(',', ':'))},\n",
     dump_list('lots', out['lots']),

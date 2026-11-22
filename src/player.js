@@ -1,5 +1,6 @@
 import { makePerson, animatePerson, setOutfit } from './models.js';
 import { clamp } from './physics.js';
+import { groundY } from './terrain.js';
 
 const LOOK = { skin: 0xe8b98f, hair: 0x3b2a1a, shirt: 0x1f3a6e, pants: 0x2b2f3a, longHair: false };
 
@@ -54,8 +55,12 @@ export class Player {
     this.heading -= turn * 3.2 * dt * (sprint ? 0.85 : 1);
     const target = fwd * (fwd < 0 ? 2.5 : maxSpeed);
     this.speed += (target - this.speed) * Math.min(1, dt * 10);
-    this.x += this.fx * this.speed * dt;
-    this.z += this.fz * this.speed * dt;
+    // Climbing is slower than walking on the flat
+    const here = groundY(this.x, this.z);
+    const grade = (groundY(this.x + this.fx * Math.sign(this.speed), this.z + this.fz * Math.sign(this.speed)) - here);
+    const climb = clamp(1 - Math.max(0, grade) * 0.9, 0.4, 1);
+    this.x += this.fx * this.speed * climb * dt;
+    this.z += this.fz * this.speed * climb * dt;
 
     const r = g.world.colliders.resolve(this.x, this.z, this.radius);
     this.x = r.x; this.z = r.z;
@@ -74,7 +79,7 @@ export class Player {
 
     this.phase += Math.abs(this.speed) * dt * 2.2;
     animatePerson(this.mesh, this.phase, clamp(Math.abs(this.speed) / 5, 0, 1.2), { throwing: this.throwAnim > 0 });
-    this.mesh.position.set(this.x, 0, this.z);
+    this.mesh.position.set(this.x, groundY(this.x, this.z), this.z);
     this.mesh.rotation.y = this.heading;
 
     if (inp.wasPressed('throw') && this.throwCd <= 0) this.throwBible();
@@ -142,12 +147,12 @@ export class Player {
       this.x = v.x - v.fx * (v.spec.length / 2 + 1); this.z = v.z - v.fz * (v.spec.length / 2 + 1);
     }
     this.mesh.visible = true;
-    this.mesh.position.set(this.x, 0, this.z);
+    this.mesh.position.set(this.x, groundY(this.x, this.z), this.z);
   }
 
   teleport(x, z, heading = Math.PI) {
     if (this.vehicle) this.exit();
     this.x = x; this.z = z; this.heading = heading; this.speed = 0;
-    this.mesh.position.set(x, 0, z);
+    this.mesh.position.set(x, groundY(x, z), z);
   }
 }

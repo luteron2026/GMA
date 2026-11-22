@@ -11,6 +11,7 @@ import { Missions } from './missions.js';
 import { loadSave, writeSave, clearSave, hasProgress } from './save.js';
 import { VEHICLE_TYPES } from './models.js';
 import { clamp, lerp, mulberry32 } from './physics.js';
+import { groundY } from './terrain.js';
 
 const BORROW_LINES = [
   'You shared Romans 12:13 ("practice hospitality"). The driver insists you borrow the car.',
@@ -49,8 +50,9 @@ export class Game {
     this.scene = new THREE.Scene();
     const sky = 0xbfdcf2;
     this.scene.background = new THREE.Color(sky);
-    this.scene.fog = new THREE.Fog(sky, 260, 900);
-    this.camera = new THREE.PerspectiveCamera(62, 1, 0.5, 1800);
+    // Far enough to see the real San Gabriel foothills around the canyon
+    this.scene.fog = this.lowSpec ? new THREE.Fog(sky, 300, 1400) : new THREE.Fog(sky, 380, 2300);
+    this.camera = new THREE.PerspectiveCamera(62, 1, 0.5, 3600);
 
     const hemi = new THREE.HemisphereLight(0xdcecff, 0x8a7a50, 2.2);
     this.scene.add(hemi);
@@ -98,8 +100,9 @@ export class Game {
     this.restoreState();
 
     const pp = this.player;
-    this.camPos = new THREE.Vector3(pp.x - Math.sin(pp.heading) * 8, 30, pp.z - Math.cos(pp.heading) * 8);
-    this.camLook = new THREE.Vector3(pp.x, 0, pp.z);
+    const py0 = groundY(pp.x, pp.z);
+    this.camPos = new THREE.Vector3(pp.x - Math.sin(pp.heading) * 8, py0 + 30, pp.z - Math.cos(pp.heading) * 8);
+    this.camLook = new THREE.Vector3(pp.x, py0, pp.z);
     this.camera.position.copy(this.camPos);
 
     this.input.bindCanvas(canvas);
@@ -525,8 +528,9 @@ export class Game {
   titleCam(dt) {
     // Slow orbit over the real campus
     const a = this.t * 0.04;
-    this.camera.position.set(-20 + Math.sin(a) * 240, 95, 40 + Math.cos(a) * 240);
-    this.camera.lookAt(-20, 0, 40);
+    const gy = groundY(-20, 40);
+    this.camera.position.set(-20 + Math.sin(a) * 240, gy + 95, 40 + Math.cos(a) * 240);
+    this.camera.lookAt(-20, gy, 40);
     this.updateWorldOnly(dt);
   }
 
@@ -629,11 +633,14 @@ export class Game {
     const k = 1 - Math.exp(-dt * (v ? 4 : 6));
     this.camPos.x = lerp(this.camPos.x, tx, k);
     this.camPos.z = lerp(this.camPos.z, tz, k);
-    this.camPos.y = lerp(this.camPos.y, height, k);
+    const py = v ? v.mesh.position.y : groundY(p.x, p.z);
+    this.camPos.y = lerp(this.camPos.y, py + height, k);
     // Keep the camera out of buildings
     const r = this.world.colliders.resolve(this.camPos.x, this.camPos.z, 0.6);
     const lookX = p.x + fx * 3, lookZ = p.z + fz * 3;
-    this.camLook.set(lookX, 1.4, lookZ);
+    this.camLook.set(lookX, py + 1.4, lookZ);
+    // Never sink into a hillside behind the player
+    this.camPos.y = Math.max(this.camPos.y, groundY(r.x, r.z) + 1.3);
     this.camera.position.set(r.x, this.camPos.y, r.z);
     if (this.shakeAmt > 0) {
       this.camera.position.x += (Math.random() - 0.5) * this.shakeAmt;
@@ -646,7 +653,8 @@ export class Game {
   updateSun() {
     if (!this.sun.castShadow) return;
     const p = this.player;
-    this.sun.position.set(p.x + 60, 140, p.z + 40);
-    this.sun.target.position.set(p.x, 0, p.z);
+    const gy = groundY(p.x, p.z);
+    this.sun.position.set(p.x + 60, gy + 140, p.z + 40);
+    this.sun.target.position.set(p.x, gy, p.z);
   }
 }

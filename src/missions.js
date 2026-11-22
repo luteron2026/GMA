@@ -1,5 +1,6 @@
 import { makeBeacon, makeItem, makePerson, randomLook, makeBubble, setOutfit, animatePerson } from './models.js';
 import { Boss } from './enemies.js';
+import { groundY } from './terrain.js';
 
 // Mission spots come from CAMPUS.places (real campus locations, in world [x, z]).
 // Offset a world spot by a few meters
@@ -313,7 +314,7 @@ export class Missions {
     for (const def of this.defs) {
       const pos = this.game.world.places[def.start];
       const beacon = makeBeacon(def.id === 'boss' ? 0xff4d4d : 0xffd23f, 1.8);
-      beacon.position.set(pos[0], 0, pos[1]);
+      beacon.position.set(pos[0], groundY(pos[0], pos[1]), pos[1]);
       this.game.scene.add(beacon);
       this.startMarkers.push({ def, pos, beacon });
     }
@@ -480,7 +481,7 @@ class MissionCtx {
 
   waypoint(pos, color, radius = 3) {
     const mesh = makeBeacon(color, radius);
-    mesh.position.set(pos[0], 0, pos[1]);
+    mesh.position.set(pos[0], groundY(pos[0], pos[1]), pos[1]);
     this.game.scene.add(mesh);
     const wp = { x: pos[0], z: pos[1], mesh, color: '#' + color.toString(16).padStart(6, '0') };
     this.waypoints.push(wp);
@@ -506,10 +507,11 @@ class MissionCtx {
     const mesh = makeItem(kind);
     mesh.scale.setScalar(1.6);
     const ring = makeBeacon(0x7fd0ff, 1.4);
-    ring.position.set(pos[0], 0, pos[1]);
-    mesh.position.set(pos[0], 1.4, pos[1]);
+    const gy = groundY(pos[0], pos[1]);
+    ring.position.set(pos[0], gy, pos[1]);
+    mesh.position.set(pos[0], gy + 1.4, pos[1]);
     this.game.scene.add(mesh, ring);
-    const pk = { x: pos[0], z: pos[1], mesh, ring, kind, onGet, got: false, color: '#7fd0ff' };
+    const pk = { x: pos[0], z: pos[1], gy, mesh, ring, kind, onGet, got: false, color: '#7fd0ff' };
     this.pickups.push(pk);
     this.blipList.push(pk);
     return pk;
@@ -521,7 +523,7 @@ class MissionCtx {
     for (const pk of this.pickups) {
       if (pk.got) continue;
       pk.mesh.rotation.y += dt * 2;
-      pk.mesh.position.y = 1.4 + Math.sin(this.elapsed * 3) * 0.2;
+      pk.mesh.position.y = pk.gy + 1.4 + Math.sin(this.elapsed * 3) * 0.2;
       if (this.nearXZ(pk.x, pk.z, 2.5)) {
         pk.got = true;
         this.game.scene.remove(pk.mesh, pk.ring);
@@ -541,7 +543,7 @@ class MissionCtx {
 
   rider(pos) {
     const mesh = makePerson(randomLook());
-    mesh.position.set(pos[0], 0, pos[1]);
+    mesh.position.set(pos[0], groundY(pos[0], pos[1]), pos[1]);
     animatePerson(mesh, 0, 0);
     const bubble = makeBubble('☕', '#7fd0ff');
     bubble.position.y = 2.4;

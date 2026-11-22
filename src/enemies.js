@@ -1,5 +1,6 @@
 import { makeImp, makeBoss, makeBible, makeFireball } from './models.js';
 import { angleDiff } from './physics.js';
+import { groundY } from './terrain.js';
 
 export class Imp {
   constructor(game, x, z, opts = {}) {
@@ -62,7 +63,7 @@ export class Imp {
     if (this.state === 'stunned') {
       this.stunT -= dt;
       this.mesh.rotation.z = Math.sin(this.t * 10) * 0.25;
-      this.mesh.position.set(this.x, 0, this.z);
+      this.mesh.position.set(this.x, groundY(this.x, this.z), this.z);
       if (this.stunT <= 0) { this.state = 'chase'; this.mesh.rotation.z = 0; }
       return true;
     }
@@ -97,7 +98,7 @@ export class Imp {
     }
     // Hop + flap
     const hop = Math.abs(Math.sin(this.t * 9)) * 0.35;
-    this.mesh.position.set(this.x, hop, this.z);
+    this.mesh.position.set(this.x, groundY(this.x, this.z) + hop, this.z);
     this.mesh.rotation.y = this.heading;
     const parts = this.mesh.userData.parts;
     parts.wingL.rotation.y = Math.sin(this.t * 20) * 0.6;
@@ -180,7 +181,7 @@ export class Boss {
     if (this.state === 'dying') {
       this.dieT -= dt;
       this.mesh.rotation.y += dt * 8;
-      this.mesh.position.y = (2.5 - this.dieT) * 3;
+      this.mesh.position.y = groundY(this.x, this.z) + (2.5 - this.dieT) * 3;
       this.mesh.scale.setScalar(Math.max(0.01, 3.6 * (this.dieT / 2.5)));
       if (this.dieT <= 0) { this.dead = true; return false; }
       return true;
@@ -192,7 +193,7 @@ export class Boss {
       this.stunT -= dt;
       this.mesh.rotation.z = Math.sin(this.t * 6) * 0.2;
       if (this.stunT <= 0) { this.state = 'fight'; this.stagger = 0; this.mesh.rotation.z = 0; }
-      this.mesh.position.set(this.x, 0, this.z);
+      this.mesh.position.set(this.x, groundY(this.x, this.z), this.z);
       return true;
     }
     const want = Math.atan2(dx, dz);
@@ -230,7 +231,7 @@ export class Boss {
       g.spawnImpsAround(this.x, this.z, this.phase + 1, 6);
     }
     const bob = Math.sin(this.t * 3) * 0.3;
-    this.mesh.position.set(this.x, bob + 0.3, this.z);
+    this.mesh.position.set(this.x, groundY(this.x, this.z) + bob + 0.3, this.z);
     this.mesh.rotation.y = this.heading;
     const parts = this.mesh.userData.parts;
     parts.wingL.rotation.y = Math.sin(this.t * 8) * 0.5;
@@ -248,7 +249,7 @@ export class Projectile {
     this.mesh = kind === 'bible' ? makeBible() : makeFireball();
     game.scene.add(this.mesh);
     this.x = x; this.z = z;
-    this.y = kind === 'bible' ? 1.4 : 2;
+    this.y = groundY(x, z) + (kind === 'bible' ? 1.4 : 2);
     const sp = kind === 'bible' ? 24 : 13;
     this.vx = Math.sin(dir) * sp; this.vz = Math.cos(dir) * sp;
     this.vy = kind === 'bible' ? 2.5 : 0;
@@ -260,7 +261,9 @@ export class Projectile {
     const g = this.game;
     this.life -= dt;
     this.x += this.vx * dt; this.z += this.vz * dt;
-    if (this.kind === 'bible') { this.vy -= 9 * dt; this.y = Math.max(0.2, this.y + this.vy * dt); }
+    const gy = groundY(this.x, this.z);
+    if (this.kind === 'bible') { this.vy -= 9 * dt; this.y = Math.max(gy + 0.2, this.y + this.vy * dt); }
+    else this.y = gy + 2; // fireballs skim the ground
     this.spin += dt * 14;
     this.mesh.position.set(this.x, this.y, this.z);
     this.mesh.rotation.set(this.kind === 'bible' ? this.spin : 0, this.spin * 0.5, 0);

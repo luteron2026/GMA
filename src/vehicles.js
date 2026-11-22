@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { makeVehicle, makePerson, randomLook, VEHICLE_TYPES, animatePerson } from './models.js';
 import { clamp, angleDiff } from './physics.js';
+import { groundY } from './terrain.js';
 
 export class Vehicle {
   constructor(game, type, x, z, heading = 0, color) {
@@ -84,6 +85,12 @@ export class Vehicle {
     } else {
       const roll = 2.5 * dt;
       this.speed = Math.abs(this.speed) < roll ? 0 : this.speed - Math.sign(this.speed) * roll;
+    }
+    // Hills: gravity pulls along the slope while the car is moving or the driver is on the pedals
+    if (this.drivenByPlayer || this.ai) {
+      const L = this.spec.length * 0.45;
+      const grade = (groundY(this.x + this.fx * L, this.z + this.fz * L) - groundY(this.x - this.fx * L, this.z - this.fz * L)) / (2 * L);
+      if (throttle !== 0 || Math.abs(this.speed) > 0.6) this.speed -= 9.8 * 0.75 * (grade / Math.sqrt(1 + grade * grade)) * dt;
     }
     if (handbrake) this.speed *= Math.max(0, 1 - 2.8 * dt);
     this.speed = clamp(this.speed, -s.maxSpeed * 0.35, s.maxSpeed);
@@ -183,8 +190,16 @@ export class Vehicle {
   }
 
   sync(dt = 0) {
-    this.mesh.position.set(this.x, 0, this.z);
+    // Sit on the ground: pitch and roll from the ground under the wheels
+    const L = this.spec.length * 0.42, Wd = this.spec.width * 0.42;
+    const hf = groundY(this.x + this.fx * L, this.z + this.fz * L), hb = groundY(this.x - this.fx * L, this.z - this.fz * L);
+    // local +x of the body is world (fz, -fx)
+    const hr = groundY(this.x + this.fz * Wd, this.z - this.fx * Wd), hl = groundY(this.x - this.fz * Wd, this.z + this.fx * Wd);
+    this.mesh.position.set(this.x, (hf + hb + hl + hr) / 4, this.z);
+    this.mesh.rotation.order = 'YXZ';
     this.mesh.rotation.y = this.heading;
+    this.mesh.rotation.x = -Math.atan2(hf - hb, 2 * L);
+    const tilt = Math.atan2(hr - hl, 2 * Wd);
     this.wheelSpin += (this.speed * dt) / this.mesh.userData.wheelR;
     const ws = this.mesh.userData.wheels;
     for (let i = 0; i < ws.length; i++) {
@@ -193,7 +208,7 @@ export class Vehicle {
       ws[i].rotation.y = i % 2 === 1 ? -this.steer * 0.45 : 0;
     }
     // Slight body lean in turns
-    this.mesh.rotation.z = -this.steer * clamp(this.speed / 25, -1, 1) * 0.05;
+    this.mesh.rotation.z = tilt - this.steer * clamp(this.speed / 25, -1, 1) * 0.05;
   }
 
   dispose() {
