@@ -1,5 +1,6 @@
 import { makePerson, randomLook, animatePerson, makeBubble } from './models.js';
 import { angleDiff } from './physics.js';
+import { groundY } from './terrain.js';
 
 // Friendly campus requests. Helping is a "good deed" and raises Divine Approval.
 export const NEEDS = [
@@ -167,7 +168,7 @@ export class NPC {
   }
 
   sync() {
-    this.mesh.position.set(this.x, 0, this.z);
+    this.mesh.position.set(this.x, groundY(this.x, this.z), this.z);
     this.mesh.rotation.y = this.heading;
     if (this.bubble) this.bubble.position.y = 2.4 + Math.sin(performance.now() / 250) * 0.08;
   }

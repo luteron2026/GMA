@@ -1,4 +1,5 @@
 // DOM heads-up display + minimap.
+import { CORE, TREES } from './terrain.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -38,8 +39,25 @@ export class HUD {
     const tx = (x) => (x - b.minX + 40) * scale, tz = (z) => (z - b.minZ + 40) * scale;
     ctx.fillStyle = '#8b8a5c';
     ctx.fillRect(0, 0, c.width, c.height);
-    ctx.fillStyle = '#9fb36a';
-    ctx.fillRect(tx(b.minX), tz(b.minZ), (b.maxX - b.minX) * scale, (b.maxZ - b.minZ) * scale);
+    // Real relief: hillshade of the LiDAR ground, lit from the northwest
+    const g = CORE;
+    const hs = document.createElement('canvas');
+    hs.width = g.nx; hs.height = g.ny;
+    const hctx = hs.getContext('2d');
+    const img = hctx.createImageData(g.nx, g.ny);
+    for (let j = 0; j < g.ny; j++) {
+      for (let i = 0; i < g.nx; i++) {
+        const k = j * g.nx + i;
+        const dx = (g.h[Math.min(k + 1, g.h.length - 1)] - g.h[Math.max(k - 1, 0)]) / (2 * g.step);
+        const dy = (g.h[Math.min(k + g.nx, g.h.length - 1)] - g.h[Math.max(k - g.nx, 0)]) / (2 * g.step);
+        const light = Math.max(0, Math.min(1.25, 0.82 + (-dx * 0.7 + dy * 0.7) * 1.6));
+        const row = (g.ny - 1 - j) * g.nx + i;
+        img.data[row * 4] = 168 * light; img.data[row * 4 + 1] = 160 * light; img.data[row * 4 + 2] = 104 * light; img.data[row * 4 + 3] = 255;
+      }
+    }
+    hctx.putImageData(img, 0, 0);
+    const half = (g.step / 2) * scale;
+    ctx.drawImage(hs, tx(g.x0) - half, tz(-g.y1) - half, g.nx * g.step * scale, g.ny * g.step * scale);
     const poly = (pts, fill) => {
       ctx.beginPath();
       pts.forEach(([x, z], i) => (i ? ctx.lineTo(tx(x), tz(z)) : ctx.moveTo(tx(x), tz(z))));
@@ -62,6 +80,11 @@ export class HUD {
     }
     const [hx, hz] = w.places.hill;
     ctx.beginPath(); ctx.arc(tx(hx), tz(hz), 34 * scale, 0, Math.PI * 2); ctx.fillStyle = '#c4a676'; ctx.fill();
+    // Tree canopy
+    ctx.fillStyle = 'rgba(52,96,44,0.55)';
+    for (const t of TREES) {
+      ctx.beginPath(); ctx.arc(tx(t[0] + t[6]), tz(-(t[1] + t[7])), Math.max(1.5, t[3] * scale), 0, Math.PI * 2); ctx.fill();
+    }
     for (const bd of w.buildings) poly(bd.wpts, bd.id === 'chapel' ? '#ffffff' : bd.dorm ? '#e9c98a' : bd.kind === 'house' ? '#b8b2a6' : '#e2d3b5');
     this.mapImg = c;
     this.mapScale = scale;
