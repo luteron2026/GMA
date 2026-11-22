@@ -3,6 +3,9 @@ import { CAMPUS } from './data/campus.js';
 import { Colliders, pointInPoly, distToPolyline, mulberry32 } from './physics.js';
 import { mat, makeLabel, GEOM } from './models.js';
 import { CORE, OUTER, groundY, heightAtCampus, shrubAt, inCore, roofFor, TREES, STRUCTURES, setTerrainStride } from './terrain.js';
+import { lookFor, wallTexture, wallEdge, planSite, paintSite, BoxBatch, addDetails, addSite, entranceMonument } from './buildings.js';
+import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
+import { planStreetscape, paintShoulders, paintStreetLines, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -45,6 +48,8 @@ export class World {
     this.labels = [];
     this.groundY = groundY;
     setTerrainStride(lowSpec ? 2 : 1);
+    this.site = planSite(this); // fountains, pool, courtyards from the Street View notes
+    this.street = planStreetscape(this); // signs, poles, fences, gates from the Street View notes
     this.build();
   }
 
@@ -57,6 +62,7 @@ export class World {
     this.buildProps();
     this.buildStreetSigns();
     this.buildStopSigns();
+    buildStreetscape(this);
     this.buildBoundary();
     this.buildTrees();
     this.buildStructures();
@@ -216,6 +222,9 @@ export class World {
     const [cpx, cpy] = P(phx, phy);
     ctx.fillStyle = GROUND_COLORS.dirt; ctx.beginPath(); ctx.arc(cpx, cpy, 34 * ppm, 0, Math.PI * 2); ctx.fill();
 
+    // Plazas, the pool and courtyards
+    paintSite(ctx, P, ppm, this.site);
+
     // 3. Dry creek washes
     for (const w of CAMPUS.washes) stroke(w.pts, '#d8c9a3', w.width);
 
@@ -234,16 +243,16 @@ export class World {
     ctx.stroke();
     ctx.lineCap = 'round';
 
-    // 5. Trails, paths, driveways, service roads and streets (with curbs and a center line)
+    // 5. Street shoulders, then trails, paths, driveways, service roads and streets
+    paintShoulders(stroke);
     for (const kind of ['trail', 'path', 'driveway', 'aisle', 'service']) {
       for (const r of CAMPUS.roads) if (r.kind === kind) stroke(r.pts, ROAD_COLORS[kind], r.width);
     }
     const streets = CAMPUS.roads.filter((r) => r.kind === 'street');
-    for (const r of streets) stroke(r.pts, '#c9c4b8', r.width + 1.4);
     for (const r of streets) stroke(r.pts, ROAD_COLORS.street, r.width);
-    ctx.lineCap = 'butt';
-    for (const r of streets) stroke(r.pts, '#f2c94c', 0.25, [3, 5]);
-    ctx.setLineDash([]);
+    // Center and edge lines, crosswalks, red curbs, painted STOP/BUMP, planting beds
+    paintStreetLines(ctx, P, ppm, stroke, this.street);
+    ctx.lineCap = 'round';
 
     // 6. Fine grain so close-up ground isn't flat color
     const tile = document.createElement('canvas');
@@ -345,27 +354,48 @@ export class World {
   // ---------- buildings ----------
 
   buildBuildings() {
-    const wallTex = makeWindowTexture();
-    const dormTex = makeWindowTexture(true);
     const houseTex = makeWindowTexture(false, true);
+    // Unnamed campus buildings share the campus style from the Street View notes
+    const campusStyle = wallTexture(lookFor({ kind: 'campus', id: '' }));
+    const campusTex = campusStyle.tex.clone();
+    campusTex.repeat.set(1 / campusStyle.bayW, 1 / 3.6);
+    campusTex.needsUpdate = true;
     // Named buildings get their own meshes; the ~130 houses and minor buildings are merged
     // into a handful of meshes (one per texture) so phones don't choke on draw calls.
     const batch = new Batcher();
+    const boxes = new BoxBatch();
+    const rng = mulberry32(77);
+    const shadows = !this.lowSpec;
     for (const b of this.buildings) {
-      const { walls, roof, top, base, pitched } = buildingGeometry(b, roofFor(b.id));
+      const geo = buildingGeometry(b, roofFor(b.id));
+      const { walls, roof, top, base, pitched } = geo;
       b.top = top; b.base = base;
+      const look = lookFor(b);
       let roofColor;
-      if (b.roofColor) roofColor = b.roofColor;
-      else if (pitched) roofColor = b.kind === 'house' ? 0x8c4a3a : 0xa65a42; // clay tile
-      else roofColor = b.kind === 'house' ? 0x8f8a80 : shade(b.color, 0.8); // flat gravel / membrane
+      if (!look) roofColor = b.roofColor || (pitched ? 0x8c4a3a : 0x8f8a80);
+      else roofColor = look.roof ?? (pitched ? CAMPUS_STYLE.roof : CAMPUS_STYLE.flatRoof);
+      // Floor height from the LiDAR wall height and the number of stories
+      const eaves = geo.verts.slice(0, geo.n).map((v) => v[2] - (base + 0.3)).sort((a, c) => a - c);
+      const eave = eaves[Math.floor(eaves.length / 2)] || 3.6;
+      const stories = (look && look.stories) || Math.max(1, Math.round(eave / 3.6));
+      geo.floorH = Math.min(5, Math.max(2.8, eave / stories));
       if (b.name) {
-        const tex = b.dorm ? dormTex : wallTex;
-        const wm = new THREE.Mesh(walls, new THREE.MeshLambertMaterial({ color: b.color, map: tex }));
+        const wt = wallTexture(look);
+        const tex = wt.tex.clone();
+        tex.repeat.set(1 / wt.bayW, 1 / geo.floorH);
+        tex.needsUpdate = true;
+        const wm = new THREE.Mesh(walls, new THREE.MeshLambertMaterial({ map: tex }));
         const rm = new THREE.Mesh(roof, mat(roofColor));
-        for (const m of [wm, rm]) { m.castShadow = !this.lowSpec; m.receiveShadow = true; this.scene.add(m); }
-      } else {
-        batch.add(b.kind === 'house' ? 'houseWalls' : 'campusWalls', walls, b.color);
+        for (const m of [wm, rm]) { m.castShadow = shadows; m.receiveShadow = true; this.scene.add(m); }
+      } else if (look) {
+        const v = 0.9 + rng() * 0.1;
+        batch.add('campusWalls', walls, new THREE.Color(v, v, v));
         batch.add('roofs', roof, roofColor);
+      } else {
+        // Colors typical of the street the house is on (Street View notes)
+        const hl = houseLook(b);
+        batch.add(hl && hl.shutters ? 'shutterWalls' : 'houseWalls', walls, hl ? hl.wall : b.color);
+        batch.add('roofs', roof, hl ? hl.roof : roofColor);
       }
       this.colliders.addPoly(b.wpts, b.id);
 
@@ -377,53 +407,49 @@ export class World {
         label.position.set(cx, top + (b.small ? 2.5 : 3.5), -cy);
         this.scene.add(label);
         this.labels.push(label);
-        this.addDoor(b);
+        const door = this.addDoor(b, look);
+        addDetails(this, b, look, door, geo, boxes);
       }
     }
-    const texFor = { houseWalls: houseTex, campusWalls: wallTex };
+    addSite(this, this.site, boxes);
+    boxes.flush(this.scene, shadows);
+    const texFor = { houseWalls: houseTex, shutterWalls: makeWindowTexture(false, true, true), campusWalls: campusTex };
     for (const m of batch.meshes((key) => new THREE.MeshLambertMaterial({ vertexColors: true, map: texFor[key] || null }))) {
-      m.castShadow = !this.lowSpec;
+      m.castShadow = shadows;
       m.receiveShadow = true;
       this.scene.add(m);
     }
   }
 
-  // Door + navy awning on the wall by the building's mission spot (or else the nearest road)
-  addDoor(b) {
-    const poly = b.poly;
-    let best = null, bestD = Infinity;
-    for (let i = 0; i < poly.length; i++) {
-      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length];
-      const len = Math.hypot(bx - ax, by - ay);
-      if (len < 5) continue;
-      let nx = (by - ay) / len, ny = -(bx - ax) / len;
-      const mx = (ax + bx) / 2, my = (ay + by) / 2;
-      if (pointInPoly(mx + nx * 0.5, my + ny * 0.5, poly)) { nx = -nx; ny = -ny; }
-      const px = mx + nx * 3, py = my + ny * 3;
-      let d = Infinity;
-      if (b.door) d = Math.hypot(px - b.door[0], py - b.door[1]);
-      else {
-        for (const r of this.data.roads) {
-          if (r.kind === 'trail') continue;
-          d = Math.min(d, distToPolyline(px, py, r.pts) - r.width / 2);
-        }
-      }
-      if (d < bestD) { bestD = d; best = { mx, my, nx, ny }; }
-    }
-    if (!best) return;
-    const { mx, my, nx, ny } = best;
+  // Door (with an awning unless the building has a porch) on the real entrance side: the wall
+  // by the building's mission spot, or else the wall nearest a road
+  addDoor(b, look) {
+    const e = b.door
+      ? wallEdge(b, { target: b.door })
+      : wallEdge(b, {
+        score: (mx, my, nx, ny) => {
+          let d = Infinity;
+          for (const r of this.data.roads) if (r.kind !== 'trail') d = Math.min(d, distToPolyline(mx + nx * 3, my + ny * 3, r.pts) - r.width / 2);
+          return -d;
+        },
+      });
+    if (!e) return null;
+    const { mx, my, nx, ny } = e;
     const gy = heightAtCampus(mx + nx * 1.5, my + ny * 1.5);
     const rot = Math.atan2(nx, -ny); // world heading of the outward normal (nx, -ny)
-    const door = new THREE.Mesh(GEOM.box, mat(0x4a3424));
+    const door = new THREE.Mesh(GEOM.box, mat(0x3a2c22));
     door.scale.set(2.4, 3, 0.2);
     door.position.set(mx + nx * 0.06, gy + 1.5, -(my + ny * 0.06));
     door.rotation.y = rot;
     this.scene.add(door);
-    const awning = new THREE.Mesh(GEOM.box, mat(0x1f3a6e));
-    awning.scale.set(3.6, 0.2, 1.6);
-    awning.position.set(mx + nx * 0.8, gy + 3.3, -(my + ny * 0.8));
-    awning.rotation.y = rot;
-    this.scene.add(awning);
+    if (look.porch !== 'gable' && look.porch !== 'posts') {
+      const awning = new THREE.Mesh(GEOM.box, mat(look.awning ?? look.trim));
+      awning.scale.set(3.6, 0.2, 1.6);
+      awning.position.set(mx + nx * 0.8, gy + 3.3, -(my + ny * 0.8));
+      awning.rotation.y = rot;
+      this.scene.add(awning);
+    }
+    return e;
   }
 
   addRoofCross(x, y, top) {
@@ -471,16 +497,9 @@ export class World {
     const [ex, ez] = this.places.mainEntrance;
     const road = this.namedRoads.find((r) => r.name === 'Placerita Canyon Road');
     const ang = road ? roadAngleAt(road.wpts, ex, ez) : 0;
-    const sign = new THREE.Group();
-    const wall = new THREE.Mesh(GEOM.box, mat(0xb9a98a));
-    wall.scale.set(10, 3, 1.2); wall.position.y = 1.1; wall.castShadow = true; sign.add(wall);
-    const ey = groundY(ex, ez);
-    sign.position.set(ex, ey, ez);
-    sign.rotation.y = ang;
-    this.scene.add(sign);
-    const lbl = makeLabel("The Master's University", 'Placerita Canyon', { width: 9, bg: 'rgba(31,58,110,0.95)' });
-    lbl.position.set(ex, ey + 3.6, ez); this.scene.add(lbl);
-    for (const k of [-3, 0, 3]) this.colliders.addCircle(ex + Math.cos(ang) * k, ez - Math.sin(ang) * k, 1.4);
+    // Stacked-stone monument with raised lettering and a wood-slat panel (Street View notes)
+    entranceMonument(this.scene, ENTRANCE_SIGN, ex, ez, groundY(ex, ez), ang, !this.lowSpec);
+    for (const k of [-2, 0, 2, 4.4]) this.colliders.addCircle(ex + Math.cos(ang) * k, ez - Math.sin(ang) * k, 1);
 
     // Prayer Hill: a wooden cross in a clearing ringed with rocks, open toward the trail
     const [hx, hz] = this.places.hill;
@@ -643,13 +662,21 @@ export class World {
   buildTrees() {
     const rng = mulberry32(1961);
     const broad = [], palms = [], conifers = [];
-    for (const t of TREES) {
-      const [tx, ty, h, r, kind, cb, dx, dy] = t;
+    // Particular trees from the Street View notes (palm species, stone pines, crape myrtles)
+    const notes = treeNotes(TREES);
+    const all0 = TREES.map((t, i) => ({ t, style: notes.styles.get(i) }))
+      .concat(notes.extra.map((e) => ({ t: [e.x, e.y, e.h, e.r, e.style.endsWith('Palm') ? 1 : 0, e.style.endsWith('Palm') ? 0.85 : 0.35, 0, 0], style: e.style })));
+    for (const { t, style } of all0) {
+      let [tx, ty, h, r, kind, cb, dx, dy] = t;
       const [x, z] = W([tx, ty]);
       const g = groundY(x, z);
       const tree = { x, z, g, h, r, cb: Math.max(0.12, Math.min(0.75, cb)) * h, cx: x + dx, cz: z - dy, rot: rng() * Math.PI * 2, c: rng() };
+      if (style === 'canaryPalm') { kind = 1; tree.h = Math.max(h, 10); tree.trunkW = 1.7; tree.frond = 5; tree.cx = x; tree.cz = z; }
+      else if (style === 'fanPalm') { kind = 1; tree.h = Math.max(h, 16); tree.trunkW = 0.75; tree.frond = 2.2; tree.cx = x; tree.cz = z; }
+      else if (style === 'stonePine') { kind = 0; tree.cb = 0.68 * tree.h; tree.r = r * 1.15; tree.color = 0x3f5f33; }
+      else if (style === 'crapeMyrtle') { kind = 0; tree.color = 0xd77aa8; }
       (kind === 1 ? palms : kind === 2 ? conifers : broad).push(tree);
-      if (this.inBounds(x, z, -2)) this.colliders.addCircle(x, z, Math.min(0.9, 0.3 + h * 0.025), 'tree');
+      if (this.inBounds(x, z, -2)) this.colliders.addCircle(x, z, Math.min(0.9, 0.3 + tree.h * 0.025 * (tree.trunkW || 1)), 'tree');
     }
     // Scenery beyond the LiDAR area: oaks in the canyons around (no collision)
     const outside = [];
@@ -688,7 +715,8 @@ export class World {
       q.setFromAxisAngle(up, t.rot);
       m4.compose(v.set(t.cx, midY, t.cz), q, sc.set(t.r, crownH / 2, t.r * 0.92));
       crowns.setMatrixAt(ci, m4);
-      col.copy(leaf[Math.floor(t.c * leaf.length)]).multiplyScalar(0.9 + t.c * 0.2);
+      if (t.color) col.set(t.color).multiplyScalar(0.92 + t.c * 0.12);
+      else col.copy(leaf[Math.floor(t.c * leaf.length)]).multiplyScalar(0.9 + t.c * 0.2);
       crowns.setColorAt(ci++, col);
       const off = t.r * 0.35;
       m4.compose(v.set(t.cx + Math.cos(t.rot) * off, midY + crownH * 0.22, t.cz + Math.sin(t.rot) * off), q, sc.set(t.r * 0.7, crownH * 0.36, t.r * 0.7));
@@ -708,12 +736,13 @@ export class World {
     const e = new THREE.Euler(0, 0, 0, 'YXZ');
     palms.forEach((t, i) => {
       const top = t.h - 0.8;
-      m4.compose(v.set(t.x, t.g - 0.2, t.z), q.identity(), sc.set(1, top + 0.2, 1)); ptr.setMatrixAt(i, m4);
-      const fl = Math.max(2.4, t.r * 1.15);
+      const tw = t.trunkW || 1;
+      m4.compose(v.set(t.x, t.g - 0.2, t.z), q.identity(), sc.set(tw, top + 0.2, tw)); ptr.setMatrixAt(i, m4);
+      const fl = t.frond || Math.max(2.4, t.r * 1.15);
       for (let k = 0; k < 8; k++) {
         e.set(0.25 + (k % 2) * 0.3, (k / 8) * Math.PI * 2 + t.rot, 0);
         q.setFromEuler(e);
-        m4.compose(v.set(t.x, t.g + top, t.z), q, sc.set(1, 1, fl));
+        m4.compose(v.set(t.x, t.g + top, t.z), q, sc.set(tw, tw, fl));
         pfr.setMatrixAt(i * 8 + k, m4);
       }
     });
@@ -897,6 +926,9 @@ export class World {
     return near ? [...near] : [...this.places.spawn];
   }
 
+  // Height of a speed bump at a world point (cars bounce over them)
+  bumpHeight(x, z) { return bumpHeight(this.street, x, -z); }
+
   inBounds(x, z, m = 0) {
     const b = this.bounds;
     return x > b.minX + m && x < b.maxX - m && z > b.minZ + m && z < b.maxZ - m;
@@ -958,7 +990,7 @@ function buildingGeometry(b, roof) {
     const tris = THREE.ShapeUtils.triangulateShape(shape.getPoints(), []);
     for (const t of tris) pushTri(rf, t.map((k) => [verts[k][0], verts[k][2], -verts[k][1]]), [[0, 0], [0, 0], [0, 0]], [0, 1, 0], true);
   }
-  return { walls: toGeometry(wall), roof: toGeometry(rf), top, base, pitched: roof.pitched };
+  return { walls: toGeometry(wall), roof: toGeometry(rf), top, base, pitched: roof.pitched, verts, n };
 }
 
 // Add a triangle facing `want` (flips the winding if needed); flat normal
@@ -1063,7 +1095,7 @@ function offsetPath(pts, off) {
   return out;
 }
 
-function makeWindowTexture(dorm = false, house = false) {
+function makeWindowTexture(dorm = false, house = false, shutters = false) {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
   const ctx = c.getContext('2d');
@@ -1074,6 +1106,7 @@ function makeWindowTexture(dorm = false, house = false) {
     ctx.fillRect(18, 18, 28, 22);
     ctx.fillStyle = '#e8e8e8';
     ctx.fillRect(31, 18, 2, 22);
+    if (shutters) { ctx.fillStyle = '#1c1c1c'; ctx.fillRect(9, 17, 8, 24); ctx.fillRect(47, 17, 8, 24); }
   } else if (dorm) {
     ctx.fillRect(14, 14, 36, 26);
     ctx.fillStyle = '#d8d0c0';

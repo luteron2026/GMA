@@ -1,0 +1,81 @@
+{
+  "_about": "Written observations of the streets, signs and neighborhood around campus from Google Maps Street View, collected with Claude in Chrome (descriptions only, no imagery). src/data/streetscape.js is built from these by hand.",
+  "signs": [
+    {"type":"stop","text":"STOP","lat":34.38408,"lon":-118.51708,"faces":"N","note":"Quigley Canyon Rd at Placeritos Blvd, SE corner; seen from behind; same post as the street-name sign"},
+    {"type":"street-name","text":"PLACERITOS BLVD (block number below)","lat":34.38408,"lon":-118.51708,"faces":"N","note":"green blade, white letters, decorative green top cap"},
+    {"type":"stop pavement marking","text":"STOP","lat":34.38404,"lon":-118.51685,"faces":"W","note":"painted on westbound Placeritos Blvd at Quigley; I didn't see a pole sign"},
+    {"type":"dead end","text":"DEAD END","lat":34.38402,"lon":-118.51690,"faces":"E","note":"yellow diamond on south side of Placeritos Blvd, just east of Quigley"},
+    {"type":"stop","text":"STOP","lat":34.38228,"lon":-118.51762,"faces":"S","note":"Quigley Canyon Rd at Placerita Canyon Rd, seen from behind"},
+    {"type":"stop pavement marking","text":"STOP","lat":34.38232,"lon":-118.51760,"faces":"S","note":"painted on southbound Quigley"},
+    {"type":"stop","text":"STOP","lat":34.38210,"lon":-118.51772,"faces":"N","note":"campus main drive exit onto Placerita Canyon Rd, seen from behind"},
+    {"type":"no parking (private property)","text":"PRIVATE PROPERTY / NO [rest not readable]","lat":34.38210,"lon":-118.51772,"faces":"N","note":"small white sign under the stop sign"},
+    {"type":"pedestrian crossing (flashing beacon)","text":"walking-person symbol + down-left arrow plate","lat":34.38218,"lon":-118.51742,"faces":"E","note":"fluorescent yellow-green, solar panel on top, push-button box on pole; north side of road"},
+    {"type":"pedestrian crossing (flashing beacon)","text":"walking-person symbol + arrow plate","lat":34.38210,"lon":-118.51745,"faces":"E","note":"same kind, campus (south) side"},
+    {"type":"speed bump warning","text":"BUMP","lat":34.38216,"lon":-118.51722,"faces":"E","note":"yellow diamond with red diamond object marker below; north side, east of crosswalk"},
+    {"type":"do not enter","text":"red circle with white bar","lat":34.38224,"lon":-118.51712,"faces":"S","note":"athletic parking lot entrance off Placerita Canyon Rd"},
+    {"type":"speed bump warning","text":"BUMP","lat":34.38300,"lon":-118.52175,"faces":"E","note":"yellow diamond with red object marker; north side across from West Campus drive"},
+    {"type":"pavement marking","text":"BUMP","lat":34.38252,"lon":-118.51900,"faces":"W","note":"painted on Placerita Canyon Rd near 21907"},
+    {"type":"stop","text":"STOP","lat":34.38163,"lon":-118.51472,"faces":"N","note":"Pepperidge Dr at Placerita Canyon Rd, with green street-name blade"},
+    {"type":"speed limit","text":"unknown","lat":null,"lon":null,"faces":"unknown","note":"no speed limit signs seen on the stretches I drove"}
+  ],
+  "streetFeatures": {
+    "Placerita Canyon Road": {"lanes":2,"centerLine":"double yellow","sidewalks":"none; dirt/decomposed-granite shoulders, short concrete walks only at campus driveways","curbColor":"mostly no curb; gray concrete curb at campus frontage","redCurbs":"at main campus drive and West Campus drive","crosswalks":[{"lat":34.38216,"lon":-118.51740,"style":"white continental (ladder) stripes"},{"lat":34.38292,"lon":-118.52200,"style":"white ladder stripes at West Campus drive"}],"streetLights":"gray cobra-head arms mounted on wooden utility poles, irregular, roughly 60-100 m apart","utilityPoles":"yes, wooden poles with heavy overhead wires, mostly on the south (campus) side","speedBumps":[{"lat":34.38214,"lon":-118.51715},{"lat":34.38252,"lon":-118.51900},{"lat":34.38298,"lon":-118.52185}]},
+    "Placeritos Boulevard": {"lanes":2,"centerLine":"double yellow, white edge lines","sidewalks":"none; wide light decomposed-granite shoulders","curbColor":"none (asphalt edge)","redCurbs":"none seen","crosswalks":"none seen","streetLights":"unknown (none clearly seen)","utilityPoles":"yes, wooden poles on the south side","speedBumps":"none seen"},
+    "Quigley Canyon Road": {"lanes":2,"centerLine":"none","sidewalks":"none; dirt and mulch shoulders","curbColor":"none","redCurbs":"none seen","crosswalks":"none seen","streetLights":"none seen","utilityPoles":"yes, wooden poles on the west side by the athletic field","speedBumps":"none seen"},
+    "Meadview Avenue": {"lanes":2,"centerLine":"none","sidewalks":"none; gravel shoulders","curbColor":"none","redCurbs":"none seen","crosswalks":"none seen","streetLights":"unknown","utilityPoles":"unknown","speedBumps":"none seen"},
+    "Pepperidge Drive": {"lanes":2,"centerLine":"none","sidewalks":"none","curbColor":"gray concrete rolled curb","redCurbs":"none seen","crosswalks":"none seen","streetLights":"unknown","utilityPoles":"unknown","speedBumps":"none seen"},
+    "Oak Orchard Road": {"lanes":2,"centerLine":"none","sidewalks":"none; rock-lined dirt drainage swale on one side","curbColor":"none","redCurbs":"none","crosswalks":"none seen","streetLights":"none seen","utilityPoles":"yes, wooden poles on the south side","speedBumps":"none seen"},
+    "Amelia Lane": {"note":"no Street View coverage; short cul-de-sac north of Placeritos Blvd near 34.3850, -118.5225"}
+  },
+  "walls_fences": [
+    {"type":"split-face block retaining wall with wooden split-rail fence on top","color":["#cbb48e","#8b6a4e"],"heightMeters":"wall 0.6-1.0, rail 1.1","start":{"lat":34.38300,"lon":-118.52230},"end":{"lat":34.38250,"lon":-118.51880},"note":"south (campus) side of Placerita Canyon Rd"},
+    {"type":"white vinyl 3-rail ranch fence","color":["#f4f4f2"],"heightMeters":1.2,"start":{"lat":34.38320,"lon":-118.52350},"end":{"lat":34.38270,"lon":-118.51950},"note":"north side of Placerita Canyon Rd in front of homes"},
+    {"type":"white metal pipe railing","color":["#f0f0ee"],"heightMeters":1.0,"start":{"lat":34.38305,"lon":-118.52200},"end":{"lat":34.38295,"lon":-118.52130},"note":"north side opposite West Campus drive"},
+    {"type":"low tan block wall behind trimmed hedges","color":["#cfc3ae"],"heightMeters":0.5,"start":{"lat":34.38215,"lon":-118.51830},"end":{"lat":34.38210,"lon":-118.51775},"note":"main entrance frontage, west of the drive"},
+    {"type":"wooden split-rail fence; black-mesh chain-link windscreen with yellow top cap behind it","color":["#8b6a4e","#1f2a3a","#e7b416"],"heightMeters":"rail 1.1, field fence about 2.5","start":{"lat":34.38232,"lon":-118.51740},"end":{"lat":34.38405,"lon":-118.51712},"note":"west side of Quigley Canyon Rd along athletic fields"},
+    {"type":"red brick pillars with black wrought-iron or solid metal panels","color":["#a5553a","#2b2b2b"],"heightMeters":1.5,"start":{"lat":34.38445,"lon":-118.51990},"end":{"lat":34.38420,"lon":-118.51800},"note":"in front of homes along Placeritos Blvd, some pillars topped with lanterns"},
+    {"type":"wooden split-rail fence around a mulched planting bed","color":["#9a7350"],"heightMeters":1.0,"start":{"lat":34.38410,"lon":-118.51700},"end":{"lat":34.38440,"lon":-118.51680},"note":"SE corner of Quigley and Placeritos"},
+    {"type":"tan vinyl privacy fence","color":["#cfc0a8"],"heightMeters":1.8,"start":{"lat":34.38615,"lon":-118.51660},"end":{"lat":34.38590,"lon":-118.51580},"note":"Oak Orchard Rd east of Quigley"}
+  ],
+  "campusGates": [
+    {"name":"main campus drive","lat":34.38212,"lon":-118.51768,"gateType":"none","guardBooth":false,"look":"stone pillars with a low wooden rail and a small bronze shield plaque, lantern lamp posts on stone bases, red curbs, yellow bollards"},
+    {"name":"athletic / gym parking lot","lat":34.38224,"lon":-118.51712,"gateType":"none","guardBooth":false,"look":"stone pillars with wooden rail, do-not-enter sign on one side"},
+    {"name":"West Campus drive (church / Education / Engineering)","lat":34.38292,"lon":-118.52200,"gateType":"none","guardBooth":false,"look":"stacked-stone pillar with blue directory sign"},
+    {"name":"North Campus lot off Placeritos Blvd","lat":34.38405,"lon":-118.51660,"gateType":"none","guardBooth":false,"look":"stone pillars with lantern posts and a blue sign"}
+  ],
+  "neighborhood": {
+    "Placerita Canyon Road": {"style":"ranch on large lots, plus one two-story Spanish house with red tile roof","stories":"1 (some 2)","wallColors":["#e3cfa8","#d8b892","#efe8da","#c9b79c"],"roofs":[{"color":"#7a6a5a","material":"brown asphalt shingle"},{"color":"#b5562e","material":"red clay tile"}],"frontYard":"oaks, dirt and gravel, horse-property feel behind ranch fences","driveways":"long dirt or asphalt driveways, garages mostly hidden"},
+    "Placeritos Boulevard": {"style":"ranch and Tudor-style ranch (half-timbered gables), one storybook cottage with a brick chimney","stories":1,"wallColors":["#f0e6d2","#e6cfa6","#efefe9","#c9b9a0"],"roofs":[{"color":"#8d8172","material":"flat concrete tile (gray-brown)"},{"color":"#7a6656","material":"brown shingle"}],"frontYard":"lawns, hedges, flowering shrubs behind brick-and-iron fences","driveways":"concrete driveways through iron gates"},
+    "Quigley Canyon Road": {"style":"ranch","stories":1,"wallColors":["#f2efe6","#e3cfa8"],"roofs":[{"color":"#7a6a5a","material":"brown shingle"}],"frontYard":"dirt and mulch with boulders, big pines","driveways":"concrete aprons with brick pillar gates topped by lanterns"},
+    "Meadview Avenue": {"style":"ranch with Tudor half-timber gables","stories":1,"wallColors":["#e7b98a","#f2ece0"],"roofs":[{"color":"#a89a88","material":"flat concrete tile"}],"frontYard":"large lawns, tall hedges","driveways":"circular concrete driveways with stone pillars topped by lanterns"},
+    "Pepperidge Drive": {"style":"two-story colonial / farmhouse (white siding, black shutters)","stories":2,"wallColors":["#f3f2ee","#e3cfa8"],"roofs":[{"color":"#3e3f44","material":"dark gray shingle"}],"frontYard":"sloped lawn, shrubs, brick steps with lanterns","driveways":"paver driveway to attached 2-car white garage"},
+    "Oak Orchard Road": {"style":"ranch","stories":1,"wallColors":["#ecd9b8","#efe8da"],"roofs":[{"color":"#7a6656","material":"brown shingle"}],"frontYard":"lawn and shrubs under oaks","driveways":"concrete","mailboxes":"brick pillar mailbox"}
+  },
+  "landscaping": [
+    {"what":"coast live oak canopy over the road","where":"north side of Placerita Canyon Rd west of campus","from":{"lat":34.38320,"lon":-118.52300},"to":{"lat":34.38260,"lon":-118.51900}},
+    {"what":"coast live oak tunnel","where":"Oak Orchard Rd","from":{"lat":34.38640,"lon":-118.51700},"to":{"lat":34.38580,"lon":-118.51560}},
+    {"what":"tall Italian stone pines and weeping California pepper trees","where":"east side of Quigley Canyon Rd","from":{"lat":34.38250,"lon":-118.51700},"to":{"lat":34.38400,"lon":-118.51695}},
+    {"what":"pair of Canary Island date palms","lat":34.38440,"lon":-118.51955},
+    {"what":"two tall skinny Mexican fan palms","lat":34.38158,"lon":-118.51468},
+    {"what":"row of pink crape myrtles","where":"north side of Placeritos Blvd","from":{"lat":34.38432,"lon":-118.51860},"to":{"lat":34.38425,"lon":-118.51780}},
+    {"what":"trimmed red-tipped hedges (photinia-like)","where":"main entrance frontage","from":{"lat":34.38215,"lon":-118.51830},"to":{"lat":34.38210,"lon":-118.51775}},
+    {"what":"lavender and drought-tolerant beds with lawn","lat":34.38295,"lon":-118.52160,"note":"in front of the Education Center"},
+    {"what":"yellow and green rounded shrubs with boulders in raised block planters","lat":34.38222,"lon":-118.51700,"note":"athletic lot frontage"},
+    {"what":"pollarded (knobby, cut-back) trees","lat":34.38232,"lon":-118.51765},
+    {"what":"white flowering shrubs in mulch with boulders","lat":34.38415,"lon":-118.51690},
+    {"what":"lawn with oaks around a round fountain plaza","lat":34.38200,"lon":-118.51800}
+  ],
+  "other": [
+    {"what":"row of about 4 flagpoles with navy and white flags","lat":34.38245,"lon":-118.51790,"note":"along the parking lot north of Placerita Canyon Rd, west of Quigley"},
+    {"what":"black metal shade canopy behind the flagpoles (solar or not: unknown)","lat":34.38250,"lon":-118.51780},
+    {"what":"yellow fire hydrant with two yellow bollards","lat":34.38210,"lon":-118.51772},
+    {"what":"stone-based lantern lamp posts","lat":34.38200,"lon":-118.51770,"note":"along the main campus drive"},
+    {"what":"blue campus directory signs on stacked-stone bases","lat":34.38292,"lon":-118.52198},
+    {"what":"blue campus directory sign on stone base","lat":34.38405,"lon":-118.51665},
+    {"what":"round fountain in central plaza","lat":34.38200,"lon":-118.51800},
+    {"what":"crosswalk beacon push-button box with solar panel","lat":34.38218,"lon":-118.51742},
+    {"what":"tall black parking-lot light poles","lat":34.38225,"lon":-118.51690},
+    {"what":"green residential trash bins at the curb","lat":34.38428,"lon":-118.51800},
+    {"what":"wooden benches and bike racks in the courtyard","lat":34.38466,"lon":-118.51668}
+  ]
+}

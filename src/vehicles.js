@@ -195,7 +195,15 @@ export class Vehicle {
     const hf = groundY(this.x + this.fx * L, this.z + this.fz * L), hb = groundY(this.x - this.fx * L, this.z - this.fz * L);
     // local +x of the body is world (fz, -fx)
     const hr = groundY(this.x + this.fz * Wd, this.z - this.fx * Wd), hl = groundY(this.x - this.fz * Wd, this.z + this.fx * Wd);
-    this.mesh.position.set(this.x, (hf + hb + hl + hr) / 4, this.z);
+    // Speed bumps: a bounce, and a jolt if the player takes one too fast
+    const bump = this.game.world.bumpHeight(this.x + this.fx * L, this.z + this.fz * L) + this.game.world.bumpHeight(this.x - this.fx * L, this.z - this.fz * L);
+    if (bump > 0.05 && !this.onBump && this.drivenByPlayer && Math.abs(this.speed) > 9) {
+      this.game.shake(0.3);
+      this.game.audio.bump();
+      this.speed *= 0.85;
+    }
+    this.onBump = bump > 0.05;
+    this.mesh.position.set(this.x, (hf + hb + hl + hr) / 4 + bump * 1.5, this.z);
     this.mesh.rotation.order = 'YXZ';
     this.mesh.rotation.y = this.heading;
     this.mesh.rotation.x = -Math.atan2(hf - hb, 2 * L);

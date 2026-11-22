@@ -25,9 +25,10 @@ Runs in any modern browser on desktop and phone. There's nothing to install and 
 ## What's in it
 
 - **The real campus, at real scale:** The map is built from OpenStreetMap data, so buildings have their real outlines and sit where they really are. Streets, parking lots and fields follow the real layout too. That includes the MacArthur Center (where chapel meets in Bross Court), the Dunkin Student Center / Mustang Grill, Powell Library, the Reese Center, King Hall, the six dorms (Hotchkiss, Dixon, Slight, Sweazy, Waldock, C.W. Smith), North Campus (Biblical Studies, Music, Business, Humanities), Lou Herwaldt Stadium / Reese Field with its baseball diamond, the intramural field, Placerita Bible Church, the Placeritos neighborhood, Placerita Creek, and the trails up the hill behind campus.
-- **Real hills, trees and roofs from LiDAR:** The ground is the real ground, from a 2023 USGS airborne LiDAR survey (about 17 laser points per square meter). The ridge behind campus rises about 50 m, Prayer Hill sits on the real hilltop, and the cut slopes, terraces and creek channel are where they really are. Roads climb, so cars slow down uphill and pitch and roll with the slope, and walking uphill is slower. All ~2,000 trees stand where the LiDAR found them, at their measured height and crown width, sorted into broadleaf trees, palms and conifers. Chaparral and hedges grow where the survey found low brush. Each roof's height and shape (pitched or flat, single or multi-level) is fitted to the points that hit it. Carports and sheds the map doesn't have show up too. The mountains around the canyon come from USGS elevation data. Stop signs come from the map.
+- **Real hills, trees and roofs from LiDAR:** The ground is the real ground, from a 2023 USGS airborne LiDAR survey (about 17 laser points per square meter). The ridge behind campus rises about 50 m, Prayer Hill sits on the real hilltop, and the cut slopes, terraces and creek channel are where they really are. Roads climb, so cars slow down uphill and pitch and roll with the slope, and walking uphill is slower. All ~2,000 trees stand where the LiDAR found them, at their measured height and crown width, sorted into broadleaf trees, palms and conifers. Chaparral and hedges grow where the survey found low brush. Each roof's height and shape (pitched or flat, single or multi-level) is fitted to the points that hit it. Carports and sheds the map doesn't have show up too. The mountains around the canyon come from USGS elevation data.
+- **What it looks like, from Street View notes:** Buildings have the real wall and roof colors, materials and window styles, written down from Google Street View (descriptions only, no images copied). The campus style is tan stucco, brown shingle roofs and dark-brown trim, with stacked-stone piers and bases, timber gable entrances (Dunkin, Education), the church bell tower and spire, the chapel's long stucco stair, Biblical Studies' brick columns and railed walkway, the fountain plaza by the library, the Hotchkiss pool and the stone entrance monument. Doors are on the real entrance sides. The streets have their real center lines, shoulders, crosswalks, speed bumps (cars bounce over them), red curbs, wooden utility poles with wires and streetlights, stop/dead-end/bump/pedestrian-beacon/do-not-enter signs, painted STOP and BUMP, the block walls, rail and ranch fences, brick-and-iron fences, stone gate pillars with lanterns, directory signs, flagpoles, palms, stone pines, crape myrtles and flower beds. Houses take the colors typical of their street.
 - **Street names:** Green street signs stand at intersections (Placerita Canyon Rd, Placeritos Blvd, Meadview Ave, Quigley Canyon Rd, Amelia Ln). The HUD shows the name of the street you're on, or else the area you're in.
-- **Made up for the game:** Prayer Hill (the clearing on the real hilltop), the stands behind home plate, and where the doors are. Building and roof colors, window patterns, and signs other than street-name and stop signs are made up too. No open data covers those, and Google Street View's terms don't allow copying its imagery into a game.
+- **Made up for the game:** Prayer Hill (the clearing on the real hilltop), the stands behind home plate, and the looks of buildings the Street View notes couldn't see (trees hide many dorms), which use the campus style.
 - **Good deeds:** Students with a **!** need help (dropped textbooks, lost lanyards, ring-by-spring plans). Students with a 🚗 want a ride across campus.
 - **Borrowing cars:** Golf carts, commuter sedans, the facilities truck, the outreach van, and Dean Placerita's golden cart. You get them by asking nicely.
 - **Imps:** They show up as your Divine Approval rises. Throw Bibles to stun them, then hit them again, kick them, or drive into them. Your car's Hallelujah Horn stuns every imp nearby.
@@ -71,6 +72,10 @@ src/world.js          builds the campus (ground, roads, buildings, trees, hills)
 src/data/campus.js    campus layout, generated from OpenStreetMap (don't edit by hand)
 src/data/terrain.js   ground heights, trees, shrubs, roofs, generated from USGS LiDAR (don't edit by hand)
 src/terrain.js        ground-height lookups (groundY) shared by everything that stands on the ground
+src/data/looks.js     building colors, windows and details from Street View notes (edit freely)
+src/data/streetscape.js  signs, fences, gates, poles, house colors, trees, props as [lat, lon] (edit freely)
+src/buildings.js      builds building looks and details (porches, piers, towers, signs, fountains)
+src/streetscape.js    builds streets, signs, poles and wires, fences, gates and props
 src/player.js         on-foot movement and Bible throwing
 src/vehicles.js       driving physics + AI traffic
 src/npcs.js           students, their requests, and dialogue
@@ -84,6 +89,7 @@ tools/osm_to_campus.py  turns an OpenStreetMap export into src/data/campus.js
 tools/data/tmu.osm    the OpenStreetMap export of the campus
 tools/fetch_lidar.py  downloads the USGS LiDAR points around campus
 tools/lidar_to_terrain.py  turns them (plus terrain tiles for the mountains) into src/data/terrain.js
+tools/data/streetview_*.json  the raw Street View notes behind looks.js and streetscape.js
 ```
 
 ### Changing the map

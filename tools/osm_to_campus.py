@@ -396,6 +396,11 @@ def door(bid, tx, ty, out=4.0):
         if best is None or d < best[0]: best = (d, mx + nx * out, my + ny * out)
     return open_near(best[1], best[2], avoid_roads=False)
 
+def door_facing(bid, dx, dy):
+    """Outside spot by the wall of `bid` that faces compass direction (dx, dy) (east, north)."""
+    c = B[bid].centroid
+    return door(bid, c.x + dx * 300, c.y + dy * 300)
+
 def courtyard(bid):
     poly = B[bid]
     hull = poly.minimum_rotated_rectangle
@@ -422,10 +427,11 @@ pc = obb(pitch)[0]
 places = {
     'spawn': open_near(-74, -42),
     'respawn': open_near(-64, -58),
-    'chapelDoor': door('chapel', -13, 46),
-    'grill': door('dunkin', 175, -135),
-    'library': door('library', 50, -140),
-    'reece': door('reece', 225, -130),
+    # Real entrance sides from Street View (tools/data/streetview_buildings.json)
+    'chapelDoor': door_facing('chapel', 1, 0),
+    'grill': door_facing('dunkin', 0, 1),
+    'library': door_facing('library', 0, 1),
+    'reece': door_facing('reece', 1, 0),
     'hotchkiss': door('hotchkiss', -60, -100),
     'hotchyard': courtyard('hotchkiss'),
     'dixon': door('dixon', -205, -135),
@@ -434,14 +440,14 @@ places = {
     'smith': door('smith', -290, -135),
     'sweazy': door('sweazy', -270, -135),
     'king': door('king', -30, -55),
-    'gym': door('kinesiology', -10, 100),
+    'gym': door_facing('kinesiology', 0, -1),
     'communication': door('communication', 60, 140),
     'biblical': door('biblical', 200, 180),
     'business': door('business', 250, 230),
     'music': door('music', 250, 190),
     'humanities': door('humanities', 200, 250),
-    'education': door('education', -250, -20),
-    'church': door('church', -330, 0),
+    'education': door_facing('education', 0, 1),
+    'church': door_facing('church', 0.8, 0.6),
     'quad': open_near(-71, -50),
     'herwaldtLawn': open_near(-13, 46),
     'northLawn': open_near(180, 194),
