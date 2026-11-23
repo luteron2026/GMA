@@ -208,35 +208,7 @@ export function paintShoulders(stroke) {
   }
 }
 
-export function paintStreetLines(ctx, P, ppm, stroke, plan) {
-  ctx.lineCap = 'butt';
-  for (const r of STREET_ROADS) {
-    const st = STREETS[r.name];
-    if (!st) continue;
-    if (st.center === 'double') for (const o of [-0.17, 0.17]) stroke(offsetLine(r.pts, o), '#f2c94c', 0.12);
-    else if (st.center === 'dashed') stroke(r.pts, '#f2c94c', 0.15, [3, 5]);
-    if (st.edge) for (const o of [-1, 1]) stroke(offsetLine(r.pts, o * (r.width / 2 - 0.5)), '#efefea', 0.14);
-  }
-  ctx.setLineDash([]);
-  for (const c of plan.redCurbs) stroke(c, '#c4342b', 0.35);
-  ctx.fillStyle = '#f4f4f0';
-  for (const c of plan.crosswalks) {
-    const [px, py] = P(c.x, c.y);
-    ctx.save(); ctx.translate(px, py); ctx.rotate(-Math.atan2(c.ty, c.tx)); ctx.scale(ppm, ppm);
-    for (let k = -c.w / 2 + 0.8; k <= c.w / 2 - 0.8; k += 1.25) ctx.fillRect(-1.5, k - 0.3, 3, 0.6);
-    ctx.restore();
-  }
-  for (const m of plan.markings) {
-    const [px, py] = P(m.x, m.y);
-    ctx.save(); ctx.translate(px, py);
-    ctx.rotate(Math.atan2(m.hx, m.hy)); // canvas "up" points the way drivers travel
-    ctx.scale(ppm, ppm);
-    if (m.text === 'STOP') ctx.fillRect(-1.7, -4.2, 3.4, 0.45); // stop bar just past the word
-    ctx.scale(1, 2.4); // road lettering is stretched along the lane
-    ctx.font = 'bold 1.1px Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(m.text, 0, 0);
-    ctx.restore();
-  }
+export function paintBeds(ctx, P, ppm, plan) {
   for (const b of plan.beds) {
     const [px, py] = P(b.x, b.y);
     ctx.fillStyle = '#6b5238'; ctx.beginPath(); ctx.arc(px, py, b.r * ppm, 0, Math.PI * 2); ctx.fill();
@@ -265,16 +237,26 @@ export function houseLook(b) {
 // ---------- trees ----------
 
 // Looks for particular trees: index into TREES -> style, plus trees to add
-export function treeNotes(trees) {
+export function treeNotes(trees, free = () => true) {
   const styles = new Map(), extra = [];
+  // Nearest open ground to a noted spot (off the pavement, clear of the other added trees)
+  const spot = (x0, y0) => {
+    for (let r = 0; r < 30; r += 1) {
+      for (let k = 0; k < Math.max(1, r * 6); k++) {
+        const a = (k / Math.max(1, r * 6)) * Math.PI * 2, x = x0 + Math.cos(a) * r, y = y0 + Math.sin(a) * r;
+        if (free(x, y) && !extra.some((e) => Math.hypot(e.x - x, e.y - y) < 4)) return [x, y];
+      }
+    }
+    return null;
+  };
   for (const n of TREE_NOTES) {
     if (n.at) {
       const [x, y] = toCampus(n.at);
       const near = trees.map((t, i) => [Math.hypot(t[0] - x, t[1] - y), i]).filter(([d]) => d < 12).sort((a, b) => a[0] - b[0]);
       near.slice(0, n.count).forEach(([, i]) => styles.set(i, n.kind));
       for (let k = near.length; k < n.count; k++) {
-        const [ex, ey] = offRoad(x + (k - near.length) * 4.5, y, 3); // new trees stay off the pavement
-        extra.push({ x: ex, y: ey, h: n.kind === 'fanPalm' ? 18 : 11, r: 3, style: n.kind });
+        const p = spot(x, y);
+        if (p) extra.push({ x: p[0], y: p[1], h: n.kind === 'fanPalm' ? 18 : 11, r: 3, style: n.kind });
       }
     } else {
       const a = toCampus(n.from), b = toCampus(n.to);
@@ -288,8 +270,8 @@ export function treeNotes(trees) {
       if (n.kind === 'crapeMyrtle' && found < 3) {
         const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
         for (let s = 0; s <= L; s += 11) {
-          const [x, y] = offRoad(a[0] + ((b[0] - a[0]) * s) / L, a[1] + ((b[1] - a[1]) * s) / L, 2.2);
-          extra.push({ x, y, h: 5.5, r: 2.2, style: n.kind });
+          const p = spot(a[0] + ((b[0] - a[0]) * s) / L, a[1] + ((b[1] - a[1]) * s) / L);
+          if (p) extra.push({ x: p[0], y: p[1], h: 5.5, r: 2.2, style: n.kind });
         }
       }
     }
@@ -368,7 +350,7 @@ export function buildStreetscape(world) {
   const shadows = !world.lowSpec;
   const G = (x, y) => heightAtCampus(x, y);
   const { nearBuilding, nearRoad, inLot } = makeChecks(world);
-  const ang = (tx, ty) => Math.atan2(-ty, tx); // box heading laying local x along campus (tx, ty)
+  const ang = (tx, ty) => Math.atan2(ty, tx); // box heading laying local x along campus (tx, ty)
   const lantern = mat(0xffe2a0, { emissive: 0x6b5a2a });
   const black = 0x232323, wood = 0x6b5238, stone = 0x8a7f72, cap = 0x9a8f80;
 
@@ -402,12 +384,7 @@ export function buildStreetscape(world) {
     }
   }
 
-  // Speed bumps
-  for (const b of plan.bumps) {
-    const a = ang(-b.ty, b.tx), g = G(b.x, b.y);
-    boxes.add(0x34363a, b.x, g + 0.04, -b.y, b.half * 2, 0.12, 1.0, a);
-    for (let v = -b.half + 0.6; v < b.half; v += 1.6) boxes.add(0xf2c94c, b.x - b.ty * v, g + 0.11, -(b.y + b.tx * v), 0.6, 0.02, 0.9, a);
-  }
+  // Speed bumps are built with the pavement (surfaces.js)
 
   // Wooden utility poles with crossarms, wires and cobra-head streetlights
   const poleGeo = new THREE.CylinderGeometry(0.13, 0.18, 1, 7).translate(0, 0.5, 0);

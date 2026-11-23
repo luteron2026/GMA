@@ -5,7 +5,8 @@ import { mat, makeLabel, GEOM } from './models.js';
 import { CORE, OUTER, groundY, heightAtCampus, shrubAt, inCore, roofFor, TREES, STRUCTURES, setTerrainStride } from './terrain.js';
 import { lookFor, wallTexture, wallEdge, planSite, paintSite, BoxBatch, addDetails, addSite, entranceMonument } from './buildings.js';
 import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
-import { planStreetscape, paintShoulders, paintStreetLines, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
+import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
+import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -34,7 +35,8 @@ export class World {
   constructor(scene, { lowSpec = false } = {}) {
     this.scene = scene;
     this.lowSpec = lowSpec;
-    this.data = CAMPUS;
+    // Stalls that overlap each other, drives or buildings are dropped
+    this.data = { ...CAMPUS, stalls: cleanStalls(CAMPUS.stalls, CAMPUS.buildings) };
     this.colliders = new Colliders();
     this.places = {};
     for (const [k, v] of Object.entries(CAMPUS.places)) this.places[k] = W(v);
@@ -50,6 +52,11 @@ export class World {
     setTerrainStride(lowSpec ? 2 : 1);
     this.site = planSite(this); // fountains, pool, courtyards from the Street View notes
     this.street = planStreetscape(this); // signs, poles, fences, gates from the Street View notes
+    // Concrete walks between entrances, drives and lots; trees and shrubs keep off them
+    const walks = planWalkways(this, (b) => this.doorEdge(b));
+    this.walkways = walks.walks;
+    this.plazas = walks.pads;
+    this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
     this.build();
   }
 
@@ -58,6 +65,7 @@ export class World {
     this.buildFieldGoals();
     this.buildWashRocks();
     this.buildBuildings();
+    buildSurfaces(this);
     this.buildStadium();
     this.buildProps();
     this.buildStreetSigns();
@@ -228,30 +236,13 @@ export class World {
     // 3. Dry creek washes
     for (const w of CAMPUS.washes) stroke(w.pts, '#d8c9a3', w.width);
 
-    // 4. Parking lots and stall lines
-    for (const lot of CAMPUS.lots) fillPoly(lot.poly, '#55585e');
-    ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 0.15 * ppm; ctx.setLineDash([]); ctx.lineCap = 'butt';
-    ctx.beginPath();
-    for (const [x, y, a] of CAMPUS.stalls) {
-      const dx = Math.cos(a), dy = Math.sin(a), px = -dy, py = dx;
-      for (const side of [-1.35, 1.35]) {
-        const [x1, y1] = P(x + px * side - dx * 2.4, y + py * side - dy * 2.4);
-        const [x2, y2] = P(x + px * side + dx * 2.4, y + py * side + dy * 2.4);
-        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-      }
-    }
-    ctx.stroke();
-    ctx.lineCap = 'round';
-
-    // 5. Street shoulders, then trails, paths, driveways, service roads and streets
+    // 4. Street shoulders and trails. Pavement, lots and painted lines are real geometry
+    // (surfaces.js) so their edges stay crisp up close.
     paintShoulders(stroke);
-    for (const kind of ['trail', 'path', 'driveway', 'aisle', 'service']) {
-      for (const r of CAMPUS.roads) if (r.kind === kind) stroke(r.pts, ROAD_COLORS[kind], r.width);
-    }
-    const streets = CAMPUS.roads.filter((r) => r.kind === 'street');
-    for (const r of streets) stroke(r.pts, ROAD_COLORS.street, r.width);
-    // Center and edge lines, crosswalks, red curbs, painted STOP/BUMP, planting beds
-    paintStreetLines(ctx, P, ppm, stroke, this.street);
+    for (const r of CAMPUS.roads) if (r.kind === 'trail') stroke(r.pts, ROAD_COLORS.trail, r.width);
+    // Soft dark verge under pavement edges so they sit into the ground
+    for (const lot of CAMPUS.lots) { path(lot.poly); ctx.closePath(); ctx.strokeStyle = 'rgba(70,64,52,0.35)'; ctx.lineWidth = 1.2 * ppm; ctx.stroke(); }
+    paintBeds(ctx, P, ppm, this.street);
     ctx.lineCap = 'round';
 
     // 6. Fine grain so close-up ground isn't flat color
@@ -377,7 +368,10 @@ export class World {
       // Floor height from the LiDAR wall height and the number of stories
       const eaves = geo.verts.slice(0, geo.n).map((v) => v[2] - (base + 0.3)).sort((a, c) => a - c);
       const eave = eaves[Math.floor(eaves.length / 2)] || 3.6;
-      const stories = (look && look.stories) || Math.max(1, Math.round(eave / 3.6));
+      const fit = Math.max(1, Math.round(eave / 3.6));
+      // A noted story count only if the walls are tall enough for it
+      const stories = look && look.stories ? Math.min(look.stories, Math.max(1, Math.floor(eave / 2.7))) : fit;
+      geo.stories = stories;
       geo.floorH = Math.min(5, Math.max(2.8, eave / stories));
       if (b.name) {
         const wt = wallTexture(look);
@@ -421,10 +415,11 @@ export class World {
     }
   }
 
-  // Door (with an awning unless the building has a porch) on the real entrance side: the wall
-  // by the building's mission spot, or else the wall nearest a road
-  addDoor(b, look) {
-    const e = b.door
+  // The wall with the real entrance: the one by the building's mission spot, or else the
+  // wall nearest a road (cached; the walkway planner uses it too)
+  doorEdge(b) {
+    if (b._door !== undefined) return b._door;
+    b._door = b.door
       ? wallEdge(b, { target: b.door })
       : wallEdge(b, {
         score: (mx, my, nx, ny) => {
@@ -433,6 +428,12 @@ export class World {
           return -d;
         },
       });
+    return b._door;
+  }
+
+  // Door (with an awning unless the building has a porch) on the entrance wall
+  addDoor(b, look) {
+    const e = this.doorEdge(b);
     if (!e) return null;
     const { mx, my, nx, ny } = e;
     const gy = heightAtCampus(mx + nx * 1.5, my + ny * 1.5);
@@ -658,16 +659,47 @@ export class World {
 
   // ---------- trees, shrubs and structures ----------
 
+  // Can a tree or shrub grow at this campus point? Not on pavement (with a margin), in or
+  // against a building, on a playing field or court, or on the pool deck.
+  plantable(x, y, m = 0) {
+    if (!this._plantCheck) {
+      const blds = this.buildings.map((b) => {
+        const xs = b.poly.map((p) => p[0]), ys = b.poly.map((p) => p[1]);
+        return { poly: b.poly, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+      });
+      const fields = CAMPUS.lawns.filter((l) => ['pitch', 'court', 'turf', 'sand'].includes(l.kind)).map((l) => l.poly)
+        .concat([CAMPUS.diamond.dirt, CAMPUS.diamond.grass]);
+      const pools = this.site.pools.map((pl) => pl.deck);
+      this._plantCheck = { blds, fields, pools };
+    }
+    const { blds, fields, pools } = this._plantCheck;
+    if (this.pavedAt(x, y, m)) return false;
+    for (const b of blds) {
+      if (x < b.x0 - 1 || x > b.x1 + 1 || y < b.y0 - 1 || y > b.y1 + 1) continue;
+      if (pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < 1) return false;
+    }
+    if (fields.some((p) => pointInPoly(x, y, p))) return false;
+    if (pools.some((p) => pointInPoly(x, y, p))) return false;
+    if (this.site.fountains.some((f) => Math.hypot(x - f.x, y - f.y) < f.plaza + 0.5)) return false;
+    return true;
+  }
+
   // Every tree the LiDAR found, at its real spot, height and crown size
   buildTrees() {
     const rng = mulberry32(1961);
     const broad = [], palms = [], conifers = [];
     // Particular trees from the Street View notes (palm species, stone pines, crape myrtles)
-    const notes = treeNotes(TREES);
+    const notes = treeNotes(TREES, (x, y) => this.plantable(x, y, 2.5));
     const all0 = TREES.map((t, i) => ({ t, style: notes.styles.get(i) }))
       .concat(notes.extra.map((e) => ({ t: [e.x, e.y, e.h, e.r, e.style.endsWith('Palm') ? 1 : 0, e.style.endsWith('Palm') ? 0.85 : 0.35, 0, 0], style: e.style })));
     for (const { t, style } of all0) {
       let [tx, ty, h, r, kind, cb, dx, dy] = t;
+      // Nothing growing out of pavement, buildings, sports fields or the pool deck
+      if (!this.plantable(tx, ty, 0.6)) continue;
+      // The LiDAR crown can sit a few meters off the trunk; past ~1.5 m the trunk leans
+      // unnaturally, so pull the crown back over it
+      const lean = Math.hypot(dx, dy), maxLean = Math.min(1.5, h * 0.12);
+      if (lean > maxLean) { dx *= maxLean / lean; dy *= maxLean / lean; }
       const [x, z] = W([tx, ty]);
       const g = groundY(x, z);
       const tree = { x, z, g, h, r, cb: Math.max(0.12, Math.min(0.75, cb)) * h, cx: x + dx, cz: z - dy, rot: rng() * Math.PI * 2, c: rng() };
@@ -774,7 +806,7 @@ export class World {
         if (d < 0.2 || rng() > d * 0.85) continue;
         const px = x + (rng() - 0.5) * 3, py = y + (rng() - 0.5) * 3;
         const [wx, wz] = W([px, py]);
-        if (this.colliders.pointBlocked(wx, wz, 0.8) || this.onRoad(wx, wz, true)) continue;
+        if (this.colliders.pointBlocked(wx, wz, 0.8) || !this.plantable(px, py, 1.4)) continue;
         bushes.push([wx, wz, 0.7 + d * 1.3 + rng() * 0.5, rng()]);
       }
     }
@@ -804,31 +836,44 @@ export class World {
 
   // Carports, sheds and other structures the LiDAR sees that the map doesn't have
   buildStructures() {
-    const boxes = [], tops = [], posts = [];
+    const walls = [], caps = [], tops = [], posts = [];
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     for (const [cx, cy, len, wid, ang, h] of STRUCTURES) {
       const [x, z] = W([cx, cy]);
       const gy = groundY(x, z);
       const inLot = this.lots.some((l) => pointInPoly(x, z, l.wpts));
-      q.setFromAxisAngle(up, ang); // local x along the long side
       const c = Math.cos(ang), s = Math.sin(ang);
       const at = (a, b) => [x + a * c - b * s, z - (a * s + b * c)]; // local (a, b) -> world
+      // Most of these overlapping a mapped building are parts of it (a wing, a roof
+      // structure) that the footprint already covers: drawing them made gray boxes
+      const probe = [[0, 0], [-0.3, -0.3], [0.3, -0.3], [0.3, 0.3], [-0.3, 0.3]].map(([a, b]) => at(a * len, b * wid));
+      const covered = probe.filter(([px, pz]) => this.buildings.some((b) => pointInPoly(px, pz, b.wpts))).length;
+      if (covered >= 2) continue;
+      if (!inLot && this.pavedAt(cx, cy, 0)) continue; // nothing standing in the road
+      const campus = this.inCampus(x, z);
+      q.setFromAxisAngle(up, ang); // local x along the long side
       if (inLot || len > 14) {
         // Open carport / shade canopy: roof on posts, drive under it
-        tops.push(m4.compose(v.set(x, gy + h - 0.15, z), q, sc.set(len, 0.3, wid)).clone());
+        tops.push([m4.compose(v.set(x, gy + h - 0.15, z), q, sc.set(len, 0.3, wid)).clone(), campus && !inLot ? CAMPUS_STYLE.roof : 0x7d7f80]);
         for (const sx of [-0.45, 0.45]) for (const sz of [-0.42, 0.42]) {
           const [px, pz] = at(sx * len, sz * wid);
           const pg = groundY(px, pz);
-          posts.push(m4.compose(v.set(px, (pg + gy + h) / 2, pz), q, sc.set(0.25, gy + h - pg, 0.25)).clone());
+          posts.push([m4.compose(v.set(px, (pg + gy + h) / 2, pz), q, sc.set(0.25, gy + h - pg, 0.25)).clone(), campus && !inLot ? CAMPUS_STYLE.trim : 0x6c6e70]);
           this.colliders.addCircle(px, pz, 0.25);
         }
       } else {
-        boxes.push(m4.compose(v.set(x, gy + (h - 1) / 2, z), q, sc.set(len, h + 1, wid)).clone());
+        // A shed or outbuilding: stucco on campus, plain siding elsewhere, with a roof cap
+        walls.push([m4.compose(v.set(x, gy + (h - 1) / 2, z), q, sc.set(len, h + 1, wid)).clone(), campus ? CAMPUS_STYLE.wall : 0xd8cdb8]);
+        caps.push([m4.compose(v.set(x, gy + h + 0.1, z), q, sc.set(len + 0.4, 0.25, wid + 0.4)).clone(), campus ? CAMPUS_STYLE.roof : 0x7a6a5a]);
         this.colliders.addPoly([at(-len / 2, -wid / 2), at(len / 2, -wid / 2), at(len / 2, wid / 2), at(-len / 2, wid / 2)], 'structure');
       }
     }
-    for (const [list, color] of [[boxes, 0x9a9a92], [tops, 0x7d7f80], [posts, 0x6c6e70]]) {
-      if (!list.length) continue;
+    const byColor = new Map();
+    for (const [m, color] of [...walls, ...caps, ...tops, ...posts]) {
+      if (!byColor.has(color)) byColor.set(color, []);
+      byColor.get(color).push(m);
+    }
+    for (const [color, list] of byColor) {
       const inst = new THREE.InstancedMesh(GEOM.box, mat(color), list.length);
       list.forEach((m, i) => inst.setMatrixAt(i, m));
       inst.castShadow = !this.lowSpec; inst.receiveShadow = true;
@@ -962,7 +1007,13 @@ function buildingGeometry(b, roof) {
     base -= 0.3;
     roof = { base, n: b.poly.length, verts: b.poly.map(([x, y]) => [x, y, base + 0.3 + b.height]), tris: null, pitched: false };
   }
-  const { base, n, verts } = roof;
+  const { base, n } = roof;
+  let verts = roof.verts;
+  // Where the LiDAR roof comes out lower than a person on the uphill side (or the footprint
+  // is off), raise the whole roof so every wall is at least 2.6 m tall
+  let lift = 0;
+  for (let k = 0; k < n; k++) lift = Math.max(lift, heightAtCampus(verts[k][0], verts[k][1]) + 2.6 - verts[k][2]);
+  if (lift > 0) verts = verts.map(([x, y, z]) => [x, y, z + lift]);
   const wall = { pos: [], nrm: [], uv: [] };
   let s = 0;
   for (let k = 0; k < n; k++) {
