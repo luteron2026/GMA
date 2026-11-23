@@ -21,6 +21,9 @@ Runs in any modern browser on desktop and phone. There's nothing to install and 
 | Sprint · handbrake | `Shift` | ⚡ |
 | Camera distance | `C` | 🎥 |
 | Chopper: climb · descend | `Space` · `Shift` (W/S fly, A/D turn) | 📖 · ⚡ |
+| Forklift: raise/lower forks · Tank: fire | `Space` | 📖 |
+| Pickleball: move · swing · quit | `WASD` · `Space` (hold A/D to aim, W to drive, S to dink) · `E` | stick · 📖 · ✋ |
+| Put every vehicle back where it started | 🔄 button, or **Reset vehicles** in the pause menu | 🔄 |
 | Sound · pause | `M` · `Esc` | 🔊 · ⏸ |
 
 ## What's in it
@@ -33,7 +36,10 @@ Runs in any modern browser on desktop and phone. There's nothing to install and 
 - **Good deeds:** Students with a **!** need help (dropped textbooks, lost lanyards, ring-by-spring plans). Students with a 🚗 want a ride across campus.
 - **Paved like the real thing:** Streets, drives, parking lots, walkways, the double yellow line, crosswalks, stall lines and the helipad are real geometry laid exactly on the LiDAR ground, so edges stay sharp up close. Concrete walks run from every entrance to the nearest drive or lot, along the campus drives, and between nearby buildings. Speed bumps are striped humps that follow the road. Solar panel carports shade the parking rows (you can drive and park under them).
 - **Borrowing cars:** Golf carts, commuter sedans, the facilities truck, the outreach van, and Dean Placerita's golden cart. You get them by asking nicely.
-- **The tank and the chopper:** An ROTC-surplus tank is parked on the North Campus lawn. Its tracks turn in place, nothing shoves it around, and the horn button fires a Hallelujah Shell (blanks). The Prayer Chopper sits on its pad in the Reese Center lot and really flies: climb, cruise over campus, and set it down anywhere to get out.
+- **The tank, the chopper and the forklift:** An ROTC-surplus tank is parked on the North Campus lawn. Its tracks turn in place, nothing shoves it around, and the horn button fires a Hallelujah Shell (blanks). The Prayer Chopper sits on its pad in the Reese Center lot and really flies: climb, cruise over campus, and set it down anywhere, rooftops included, to get out (from a roof you climb down the ladder). The Trophy Coffee forklift steers with its back wheels and lifts a pallet of coffee sacks. The 🔄 button puts every vehicle back where it started.
+- **Trophy Coffee:** The coffee shop at the south end of the MacArthur Center, with its patio. Order a cold brew to top up your joy.
+- **Pickleball and sand volleyball:** Four fenced pickleball courts at West Campus. Walk in through the gate and press E to play a game to 7 (win by 2) against a campus regular. Two sand volleyball courts with nets sit next to them.
+- **From the air:** Green yards and backyard pools in the neighborhoods, and gray-green chaparral on the hills, like the aerial photos.
 - **Imps:** They show up as your Divine Approval rises. Throw Bibles to stun them, then hit them again, kick them, or drive into them. Your car's Hallelujah Horn stuns every imp nearby.
 - **8 missions:**
   1. **The 9:10 Sprint:** run from Waldock Hall to chapel at the MacArthur Center before the doors close.
@@ -80,6 +86,7 @@ src/data/streetscape.js  signs, fences, gates, poles, house colors, trees, props
 src/buildings.js      builds building looks and details (porches, piers, towers, walkways, signs, fountains, the pool)
 src/surfaces.js       pavement, painted lines, stalls, speed bumps and walkways, draped on the ground mesh
 src/solar.js          solar panel carports over the parking rows
+src/sports.js         pickleball and volleyball courts, and the pickleball game
 src/streetscape.js    builds streets, signs, poles and wires, fences, gates and props
 src/player.js         on-foot movement and Bible throwing
 src/vehicles.js       driving physics + AI traffic

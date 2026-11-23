@@ -62,6 +62,7 @@ export class World {
     this.planTrophy();
     this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
     this.planVehicleSpots();
+    this.planBackyardPools();
     this.build();
   }
 
@@ -83,6 +84,7 @@ export class World {
     buildSolarCarports(this, extra);
     buildCourts(this, extra);
     this.buildTrophy(extra);
+    this.buildBackyardPools();
     extra.flush(this.scene, !this.lowSpec);
     this.buildLaneHints();
   }
@@ -129,7 +131,7 @@ export class World {
     const o = OUTER;
     const opos = new Float32Array(o.nx * o.ny * 3), col = new Float32Array(o.nx * o.ny * 3);
     const rng = mulberry32(31);
-    const dry = new THREE.Color(0xb3a066), brush = new THREE.Color(0x7d7d4a), rock = new THREE.Color(0xa08c6c), c = new THREE.Color();
+    const dry = new THREE.Color(0xa49f6a), brush = new THREE.Color(0x6a7646), rock = new THREE.Color(0xa08c6c), c = new THREE.Color();
     for (let j = 0, k = 0; j < o.ny; j++) {
       for (let i = 0; i < o.nx; i++, k++) {
         const x = o.x0 + i * o.step, y = o.y0 + j * o.step;
@@ -179,7 +181,8 @@ export class World {
     const sctx = small.getContext('2d');
     const img = sctx.createImageData(g.nx, g.ny);
     const rng = mulberry32(5);
-    const dry = [190, 170, 112], brush = [112, 118, 72], bare = [176, 150, 110];
+    // Olive grass and gray-green chaparral, like the aerial photos of the canyon
+    const dry = [170, 164, 112], brush = [92, 108, 66], bare = [170, 150, 112];
     for (let j = 0; j < g.ny; j++) {
       for (let i = 0; i < g.nx; i++) {
         const k = j * g.nx + i;
@@ -217,6 +220,17 @@ export class World {
       ctx.stroke();
     };
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // Watered yards around the houses (the neighborhoods are green from the air)
+    ctx.globalAlpha = 0.8;
+    for (const b of CAMPUS.buildings) {
+      if (b.kind !== 'house') continue;
+      const [cx, cy, L, Wd, a] = b.obb;
+      const c = Math.cos(a), sn = Math.sin(a), hl = L / 2 + 7, hw = Wd / 2 + 7;
+      fillPoly([[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw]].map(([u, v]) => [cx + c * u - sn * v, cy + sn * u + c * v]), '#8aa457');
+    }
+    for (const p of this.backyardPools || []) fillPoly(p.yard, '#7fa04f');
+    ctx.globalAlpha = 1;
 
     // 2. Irrigated lawns, fields and courts (real outlines)
     for (const lawn of CAMPUS.lawns) fillPoly(lawn.poly, GROUND_COLORS[lawn.kind]);
@@ -513,6 +527,68 @@ export class World {
     lbl.position.set(lx, g + 6, -ly);
     this.scene.add(lbl);
     this.labels.push(lbl);
+  }
+
+  // Backyard pools: lots of the houses around campus have one behind the house (away from
+  // the street), as the aerial photos show
+  planBackyardPools() {
+    const streets = CAMPUS.roads.filter((r) => r.kind === 'street' || r.kind === 'driveway');
+    const pools = [];
+    for (const b of this.buildings) {
+      if (b.kind !== 'house') continue;
+      const h = Math.abs(parseInt(String(b.id).replace(/\D/g, ''), 10) || 0);
+      if (h % 5 >= 2) continue; // about two in five
+      const [cx, cy, L, Wd, a] = b.obb;
+      // The street side is the front; the pool goes out the back
+      let best = null;
+      for (const r of streets) {
+        for (let i = 0; i < r.pts.length - 1; i++) {
+          const [ax, ay] = r.pts[i], [bx, by] = r.pts[i + 1];
+          const ex = bx - ax, ey = by - ay, L2 = ex * ex + ey * ey || 1e-9;
+          const t = Math.max(0, Math.min(1, ((cx - ax) * ex + (cy - ay) * ey) / L2));
+          const d = Math.hypot(cx - ax - ex * t, cy - ay - ey * t);
+          if (!best || d < best.d) best = { d, px: ax + ex * t, py: ay + ey * t };
+        }
+      }
+      if (!best || best.d > 60) continue;
+      let bx = cx - best.px, by = cy - best.py;
+      const bl = Math.hypot(bx, by) || 1; bx /= bl; by /= bl;
+      // Pool runs along the house; its length along whichever house axis is closer to the back
+      const c = Math.cos(a), sn = Math.sin(a);
+      const alongBack = Math.abs(bx * c + by * sn) > 0.7; // back direction ~ house's long axis
+      const reach = (alongBack ? L : Wd) / 2;
+      const pa = alongBack ? a + Math.PI / 2 : a;
+      const pc = Math.cos(pa), ps = Math.sin(pa);
+      const px = cx + bx * (reach + 4.5), py = cy + by * (reach + 4.5);
+      const P = (u, v) => [px + pc * u - ps * v, py + ps * u + pc * v];
+      const deck = [P(-5, -3), P(5, -3), P(5, 3), P(-5, 3)];
+      const water = [P(-3.6, -1.7), P(3.6, -1.7), P(3.6, 1.7), P(-3.6, 1.7)];
+      const ok = deck.concat([[px, py]]).every(([x, y]) => inCore(x, y) && !this.pavedAt(x, y, 0.8) &&
+        !this.buildings.some((o) => pointInPoly(x, y, o.poly) || distToPolyline(x, y, o.poly, true) < 1));
+      if (!ok || pools.some((q) => Math.hypot(q.x - px, q.y - py) < 12)) continue;
+      const yard = [P(-8, -6), P(8, -6), P(8, 6), P(-8, 6)];
+      pools.push({ x: px, y: py, deck, water, yard });
+      this.plazas.push(deck);
+    }
+    this.backyardPools = pools;
+  }
+
+  buildBackyardPools() {
+    const pos = [];
+    for (const p of this.backyardPools) {
+      let h = -Infinity;
+      for (const [x, y] of p.deck) h = Math.max(h, heightAtCampus(x, y));
+      const q = p.water.map(([x, y]) => [x, h + 0.08, -y]);
+      for (const k of [0, 1, 2, 0, 2, 3]) pos.push(...q[k]); // counter-clockwise from above
+      this.colliders.addPoly(p.water.map(([x, y]) => [x, -y]), 'pool', h + 0.5);
+    }
+    if (!pos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0x3aa6d8, emissive: 0x0c3a55 }));
+    m.receiveShadow = true;
+    this.scene.add(m);
   }
 
   // Where the tank and the helicopter park (world [x, z, heading])
@@ -837,8 +913,26 @@ export class World {
     }
     if (fields.some((p) => pointInPoly(x, y, p))) return false;
     if (pools.some((p) => pointInPoly(x, y, p))) return false;
+    for (const bp of this.backyardPools || []) if (Math.hypot(x - bp.x, y - bp.y) < 6.5 && pointInPoly(x, y, bp.deck)) return false;
     if (this.site.fountains.some((f) => Math.hypot(x - f.x, y - f.y) < f.plaza + 0.5)) return false;
     return true;
+  }
+
+  // Nearest building wall within reach of a campus point: { b, d, px, py } or null
+  nearestBuilding(x, y, reach) {
+    let best = null;
+    for (const b of this.buildings) {
+      const xs = b.poly.map((p) => p[0]), ys = b.poly.map((p) => p[1]);
+      if (x < Math.min(...xs) - reach || x > Math.max(...xs) + reach || y < Math.min(...ys) - reach || y > Math.max(...ys) + reach) continue;
+      for (let i = 0; i < b.poly.length; i++) {
+        const [ax, ay] = b.poly[i], [bx, by] = b.poly[(i + 1) % b.poly.length];
+        const ex = bx - ax, ey = by - ay, L2 = ex * ex + ey * ey || 1e-9;
+        const t = Math.max(0, Math.min(1, ((x - ax) * ex + (y - ay) * ey) / L2));
+        const px = ax + ex * t, py = ay + ey * t, d = Math.hypot(x - px, y - py);
+        if (d < reach && (!best || d < best.d)) best = { b, d, px, py };
+      }
+    }
+    return best;
   }
 
   // Every tree the LiDAR found, at its real spot, height and crown size
@@ -858,7 +952,21 @@ export class World {
       const lean = Math.hypot(dx, dy), maxLean = Math.min(1.5, h * 0.12);
       if (lean > maxLean) { dx *= maxLean / lean; dy *= maxLean / lean; }
       const [x, z] = W([tx, ty]);
-      const g = groundY(x, z);
+      // On a slope, plant the trunk at the low side so it never floats
+      const g = Math.min(groundY(x, z), groundY(x + 0.5, z), groundY(x - 0.5, z), groundY(x, z + 0.5), groundY(x, z - 0.5));
+      if (kind === 0) {
+        // Low, very wide LiDAR blobs made flat pancakes; tall bare trunks made lollipops
+        r = Math.min(r, h * 0.7 + 1);
+        cb = Math.min(cb, 0.55);
+        // A crown below the roofline mustn't poke through the building next to it
+        const nb = this.nearestBuilding(tx, ty, r + 1);
+        if (nb && g + Math.max(0.12, cb) * h < nb.b.top + 0.5) {
+          r = Math.max(1.6, Math.min(r, nb.d + 0.5));
+          // Lean away from the wall rather than into it
+          const ax = tx - nb.px, ay = ty - nb.py, al = Math.hypot(ax, ay) || 1;
+          if (dx * ax + dy * ay < 0) { dx = (ax / al) * 0.4; dy = (ay / al) * 0.4; }
+        }
+      }
       const tree = { x, z, g, h, r, cb: Math.max(0.12, Math.min(0.75, cb)) * h, cx: x + dx, cz: z - dy, rot: rng() * Math.PI * 2, c: rng() };
       if (style === 'canaryPalm') { kind = 1; tree.h = Math.max(h, 10); tree.trunkW = 1.7; tree.frond = 5; tree.cx = x; tree.cz = z; }
       else if (style === 'fanPalm') { kind = 1; tree.h = Math.max(h, 16); tree.trunkW = 0.75; tree.frond = 2.2; tree.cx = x; tree.cz = z; }
