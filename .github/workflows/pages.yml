@@ -23,9 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Collect site files
+        # The game code goes in a folder named after the commit, so every deploy has new
+        # file URLs and browsers can't keep running a cached copy of the old game
         run: |
-          mkdir _site
-          cp -r index.html style.css .nojekyll src vendor _site/
+          v="v/${GITHUB_SHA::8}"
+          mkdir -p "_site/$v"
+          cp -r .nojekyll vendor _site/
+          cp -r src "_site/$v/"
+          cp style.css "_site/$v/"
+          sed -e "s|href=\"style.css\"|href=\"$v/style.css\"|" -e "s|src=\"src/main.js\"|src=\"$v/src/main.js\"|" index.html > _site/index.html
+          grep -q "$v/src/main.js" _site/index.html && grep -q "$v/style.css" _site/index.html
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
