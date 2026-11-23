@@ -8,6 +8,7 @@ import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
 import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 import { buildSolarCarports } from './solar.js';
+import { planCourts, buildCourts } from './sports.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -53,12 +54,15 @@ export class World {
     setTerrainStride(lowSpec ? 2 : 1);
     this.site = planSite(this); // fountains, pool, courtyards from the Street View notes
     this.street = planStreetscape(this); // signs, poles, fences, gates from the Street View notes
+    this.courts = planCourts(); // pickleball and sand volleyball at West Campus
     // Concrete walks between entrances, drives and lots; trees and shrubs keep off them
     const walks = planWalkways(this, (b) => this.doorEdge(b));
     this.walkways = walks.walks;
     this.plazas = walks.pads;
+    this.planTrophy();
     this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
     this.planVehicleSpots();
+    this.planBackyardPools();
     this.build();
   }
 
@@ -76,9 +80,12 @@ export class World {
     this.buildBoundary();
     this.buildTrees();
     this.buildStructures();
-    const solar = new BoxBatch();
-    buildSolarCarports(this, solar);
-    solar.flush(this.scene, !this.lowSpec);
+    const extra = new BoxBatch();
+    buildSolarCarports(this, extra);
+    buildCourts(this, extra);
+    this.buildTrophy(extra);
+    this.buildBackyardPools();
+    extra.flush(this.scene, !this.lowSpec);
     this.buildLaneHints();
   }
 
@@ -124,7 +131,7 @@ export class World {
     const o = OUTER;
     const opos = new Float32Array(o.nx * o.ny * 3), col = new Float32Array(o.nx * o.ny * 3);
     const rng = mulberry32(31);
-    const dry = new THREE.Color(0xb3a066), brush = new THREE.Color(0x7d7d4a), rock = new THREE.Color(0xa08c6c), c = new THREE.Color();
+    const dry = new THREE.Color(0xa49f6a), brush = new THREE.Color(0x6a7646), rock = new THREE.Color(0xa08c6c), c = new THREE.Color();
     for (let j = 0, k = 0; j < o.ny; j++) {
       for (let i = 0; i < o.nx; i++, k++) {
         const x = o.x0 + i * o.step, y = o.y0 + j * o.step;
@@ -174,7 +181,8 @@ export class World {
     const sctx = small.getContext('2d');
     const img = sctx.createImageData(g.nx, g.ny);
     const rng = mulberry32(5);
-    const dry = [190, 170, 112], brush = [112, 118, 72], bare = [176, 150, 110];
+    // Olive grass and gray-green chaparral, like the aerial photos of the canyon
+    const dry = [170, 164, 112], brush = [92, 108, 66], bare = [170, 150, 112];
     for (let j = 0; j < g.ny; j++) {
       for (let i = 0; i < g.nx; i++) {
         const k = j * g.nx + i;
@@ -212,6 +220,17 @@ export class World {
       ctx.stroke();
     };
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // Watered yards around the houses (the neighborhoods are green from the air)
+    ctx.globalAlpha = 0.8;
+    for (const b of CAMPUS.buildings) {
+      if (b.kind !== 'house') continue;
+      const [cx, cy, L, Wd, a] = b.obb;
+      const c = Math.cos(a), sn = Math.sin(a), hl = L / 2 + 7, hw = Wd / 2 + 7;
+      fillPoly([[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw]].map(([u, v]) => [cx + c * u - sn * v, cy + sn * u + c * v]), '#8aa457');
+    }
+    for (const p of this.backyardPools || []) fillPoly(p.yard, '#7fa04f');
+    ctx.globalAlpha = 1;
 
     // 2. Irrigated lawns, fields and courts (real outlines)
     for (const lawn of CAMPUS.lawns) fillPoly(lawn.poly, GROUND_COLORS[lawn.kind]);
@@ -398,7 +417,14 @@ export class World {
         batch.add(hl && hl.shutters ? 'shutterWalls' : 'houseWalls', walls, hl ? hl.wall : b.color);
         batch.add('roofs', roof, hl ? hl.roof : roofColor);
       }
-      this.colliders.addPoly(b.wpts, b.id);
+      this.colliders.addPoly(b.wpts, b.id, top);
+      // Keep the roof triangles so the helicopter can land on it
+      {
+        const pos = roof.getAttribute('position').array;
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (let i = 0; i < pos.length; i += 3) { minX = Math.min(minX, pos[i]); maxX = Math.max(maxX, pos[i]); minZ = Math.min(minZ, pos[i + 2]); maxZ = Math.max(maxZ, pos[i + 2]); }
+        (this.roofSurfaces = this.roofSurfaces || []).push({ minX, maxX, minZ, maxZ, pos });
+      }
 
       const [cx, cy] = b.obb;
       b.center = [cx, -cy];
@@ -422,6 +448,149 @@ export class World {
     }
   }
 
+  // Trophy Coffee: the coffee shop at the south end of the MacArthur Center, by the lot
+  // along Placerita Canyon Rd. Storefront on the south wall near its east corner, a patio
+  // in front (campus space).
+  planTrophy() {
+    const b = this.buildings.find((q) => q.id === 'chapel');
+    if (!b) return;
+    const e = wallEdge(b, { dir: [0, -1], minLen: 12 });
+    const sgn = e.tx >= 0 ? 1 : -1; // along the wall toward its east end
+    const tx = e.tx * sgn, ty = e.ty * sgn, nx = e.nx, ny = e.ny;
+    const v = e.len / 2 - 7;
+    const x = e.mx + tx * v, y = e.my + ty * v;
+    const deep = 6, wide = 12;
+    const P = (a, o) => [x + tx * a + nx * o, y + ty * a + ny * o]; // a along the wall, o out from it
+    const patio = [P(-wide / 2, 0.2), P(wide / 2, 0.2), P(wide / 2, deep), P(-wide / 2, deep)];
+    this.plazas.push(patio);
+    this.trophy = { x, y, tx, ty, nx, ny, P, patio };
+    this.places.trophy = [P(0, 4)[0], -P(0, 4)[1]];
+  }
+
+  buildTrophy(boxes) {
+    const t = this.trophy;
+    if (!t) return;
+    const { P, tx, ty, nx, ny } = t;
+    const wallA = Math.atan2(ty, tx), face = Math.atan2(nx, -ny);
+    const g = heightAtCampus(...P(0, 1));
+    const shadows = !this.lowSpec;
+    // Glass storefront with a black frame, and a door in the middle
+    const [sx, sy] = P(0, 0.1);
+    boxes.add(0x22303c, sx, g + 1.45, -sy, 7.2, 2.7, 0.12, wallA);
+    for (const a of [-3.6, -1.8, 0, 1.8, 3.6]) { const [fx, fy] = P(a, 0.16); boxes.add(0x151515, fx, g + 1.45, -fy, 0.12, 2.75, 0.08, wallA); }
+    { const [fx, fy] = P(0, 0.16); boxes.add(0x151515, fx, g + 2.82, -fy, 7.4, 0.12, 0.08, wallA); }
+    { const [dx, dy] = P(0, 0.2); boxes.add(0x2b1d14, dx, g + 1.15, -dy, 1.1, 2.3, 0.08, wallA); boxes.add(0xc9a227, dx + tx * 0.4, g + 1.1, -(dy + ty * 0.4), 0.05, 0.4, 0.12, wallA); }
+    // Black awning with a gold edge
+    { const [ax, ay] = P(0, 0.9); boxes.add(0x1c1c1c, ax, g + 3.15, -ay, 8, 0.12, 1.8, wallA, 0, -0.2); const [ex, ey] = P(0, 1.78); boxes.add(0xc9a227, ex, g + 2.98, -ey, 8, 0.22, 0.06, wallA); }
+    // Sign over the awning
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 220;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#141414'; ctx.fillRect(0, 0, 1024, 220);
+    ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 8; ctx.strokeRect(8, 8, 1008, 204);
+    // A little trophy cup
+    ctx.fillStyle = '#d9b23a';
+    ctx.beginPath(); ctx.moveTo(70, 50); ctx.lineTo(170, 50); ctx.quadraticCurveTo(165, 135, 120, 140); ctx.quadraticCurveTo(75, 135, 70, 50); ctx.fill();
+    ctx.fillRect(112, 138, 16, 30); ctx.fillRect(88, 166, 64, 14);
+    ctx.lineWidth = 9; ctx.strokeStyle = '#d9b23a';
+    ctx.beginPath(); ctx.arc(70, 80, 22, Math.PI * 0.5, Math.PI * 1.5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(170, 80, 22, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
+    ctx.fillStyle = '#f2e6c8'; ctx.font = 'bold 108px Georgia, "Times New Roman", serif'; ctx.textBaseline = 'middle';
+    ctx.fillText('TROPHY COFFEE', 215, 118, 780);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.07), new THREE.MeshLambertMaterial({ map: tex, emissive: 0x111111 }));
+    const [gx, gy] = P(0, 0.14);
+    sign.position.set(gx, g + 3.9, -gy); sign.rotation.y = face;
+    this.scene.add(sign);
+    // Patio: round tables with chairs and black-and-gold umbrellas
+    const top = mat(0x2b2b2b);
+    for (const [a, o, color] of [[-4, 3, 0x1c1c1c], [0, 4.2, 0xc9a227], [4, 3, 0x1c1c1c]]) {
+      const [x, y] = P(a, o), gt = heightAtCampus(x, y);
+      const tbl = new THREE.Mesh(GEOM.cyl, top); tbl.scale.set(1.0, 0.06, 1.0); tbl.position.set(x, gt + 0.75, -y); this.scene.add(tbl);
+      boxes.add(0x2b2b2b, x, gt + 0.37, -y, 0.08, 0.75, 0.08, 0);
+      for (const k of [0, 1, 2]) {
+        const an = (k / 3) * Math.PI * 2 + a;
+        const cx = x + Math.cos(an) * 0.85, cy = y + Math.sin(an) * 0.85;
+        boxes.add(0x3a3a3a, cx, gt + 0.45, -cy, 0.42, 0.05, 0.42, an);
+        boxes.add(0x3a3a3a, cx + Math.cos(an) * 0.2, gt + 0.7, -(cy + Math.sin(an) * 0.2), 0.05, 0.5, 0.42, an);
+      }
+      boxes.add(0x6b6b6b, x, gt + 1.3, -y, 0.05, 1.1, 0.05, 0);
+      const um = new THREE.Mesh(GEOM.cone8, mat(color)); um.scale.set(2.4, 0.5, 2.4); um.position.set(x, gt + 2.05, -y); um.castShadow = shadows;
+      this.scene.add(um);
+      this.colliders.addCircle(x, -y, 0.55, 'table', gt + 2.3);
+    }
+    // Chalkboard A-frame menu by the door
+    { const [mx, my] = P(2.2, 1.3), gm = heightAtCampus(mx, my); boxes.add(0x1f2a24, mx, gm + 0.5, -my, 0.6, 0.95, 0.06, wallA, 0, 0.18); boxes.add(0x6b4f33, mx, gm + 0.5, -my, 0.66, 1.0, 0.03, wallA, 0, 0.18); }
+    const lbl = makeLabel('Trophy Coffee', 'Coffee · Pastries', { width: 10 });
+    const [lx, ly] = P(0, 3);
+    lbl.position.set(lx, g + 6, -ly);
+    this.scene.add(lbl);
+    this.labels.push(lbl);
+  }
+
+  // Backyard pools: lots of the houses around campus have one behind the house (away from
+  // the street), as the aerial photos show
+  planBackyardPools() {
+    const streets = CAMPUS.roads.filter((r) => r.kind === 'street' || r.kind === 'driveway');
+    const pools = [];
+    for (const b of this.buildings) {
+      if (b.kind !== 'house') continue;
+      const h = Math.abs(parseInt(String(b.id).replace(/\D/g, ''), 10) || 0);
+      if (h % 5 >= 2) continue; // about two in five
+      const [cx, cy, L, Wd, a] = b.obb;
+      // The street side is the front; the pool goes out the back
+      let best = null;
+      for (const r of streets) {
+        for (let i = 0; i < r.pts.length - 1; i++) {
+          const [ax, ay] = r.pts[i], [bx, by] = r.pts[i + 1];
+          const ex = bx - ax, ey = by - ay, L2 = ex * ex + ey * ey || 1e-9;
+          const t = Math.max(0, Math.min(1, ((cx - ax) * ex + (cy - ay) * ey) / L2));
+          const d = Math.hypot(cx - ax - ex * t, cy - ay - ey * t);
+          if (!best || d < best.d) best = { d, px: ax + ex * t, py: ay + ey * t };
+        }
+      }
+      if (!best || best.d > 60) continue;
+      let bx = cx - best.px, by = cy - best.py;
+      const bl = Math.hypot(bx, by) || 1; bx /= bl; by /= bl;
+      // Pool runs along the house; its length along whichever house axis is closer to the back
+      const c = Math.cos(a), sn = Math.sin(a);
+      const alongBack = Math.abs(bx * c + by * sn) > 0.7; // back direction ~ house's long axis
+      const reach = (alongBack ? L : Wd) / 2;
+      const pa = alongBack ? a + Math.PI / 2 : a;
+      const pc = Math.cos(pa), ps = Math.sin(pa);
+      const px = cx + bx * (reach + 4.5), py = cy + by * (reach + 4.5);
+      const P = (u, v) => [px + pc * u - ps * v, py + ps * u + pc * v];
+      const deck = [P(-5, -3), P(5, -3), P(5, 3), P(-5, 3)];
+      const water = [P(-3.6, -1.7), P(3.6, -1.7), P(3.6, 1.7), P(-3.6, 1.7)];
+      const ok = deck.concat([[px, py]]).every(([x, y]) => inCore(x, y) && !this.pavedAt(x, y, 0.8) &&
+        !this.buildings.some((o) => pointInPoly(x, y, o.poly) || distToPolyline(x, y, o.poly, true) < 1));
+      if (!ok || pools.some((q) => Math.hypot(q.x - px, q.y - py) < 12)) continue;
+      const yard = [P(-8, -6), P(8, -6), P(8, 6), P(-8, 6)];
+      pools.push({ x: px, y: py, deck, water, yard });
+      this.plazas.push(deck);
+    }
+    this.backyardPools = pools;
+  }
+
+  buildBackyardPools() {
+    const pos = [];
+    for (const p of this.backyardPools) {
+      let h = -Infinity;
+      for (const [x, y] of p.deck) h = Math.max(h, heightAtCampus(x, y));
+      const q = p.water.map(([x, y]) => [x, h + 0.08, -y]);
+      for (const k of [0, 1, 2, 0, 2, 3]) pos.push(...q[k]); // counter-clockwise from above
+      this.colliders.addPoly(p.water.map(([x, y]) => [x, -y]), 'pool', h + 0.5);
+    }
+    if (!pos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0x3aa6d8, emissive: 0x0c3a55 }));
+    m.receiveShadow = true;
+    this.scene.add(m);
+  }
+
   // Where the tank and the helicopter park (world [x, z, heading])
   planVehicleSpots() {
     const spiral = (cx, cy, maxR, ok) => {
@@ -437,11 +606,19 @@ export class World {
     const nearBuilding = (x, y, m) => this.buildings.some((b) => pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < m);
     // Helipad: open pavement in the Reese Center lot, with room for the rotor
     const [ex, ey] = W(this.places.eastLot); // back to campus space
-    const pad = spiral(ex, ey, 60, (x, y) => {
-      if (Math.hypot(x - ex, y - ey) < 12) return false; // off the mission marker
-      const lot = CAMPUS.lots.find((l) => pointInPoly(x, y, l.poly));
-      return lot && distToPolyline(x, y, lot.poly, true) > 6 && !nearBuilding(x, y, 9);
-    });
+    // The open spot that covers the fewest parking stalls (so the lot keeps its rows)
+    let pad = [ex, ey], best = Infinity;
+    for (let gx = ex - 60; gx <= ex + 60; gx += 1.5) {
+      for (let gy = ey - 60; gy <= ey + 60; gy += 1.5) {
+        const d = Math.hypot(gx - ex, gy - ey);
+        if (d < 12 || d > 60) continue; // off the mission marker, but in this lot
+        const lot = CAMPUS.lots.find((l) => pointInPoly(gx, gy, l.poly));
+        if (!lot || distToPolyline(gx, gy, lot.poly, true) < 6 || nearBuilding(gx, gy, 9)) continue;
+        const stalls = this.data.stalls.filter((st) => Math.hypot(st[0] - gx, st[1] - gy) < 8.5).length;
+        const score = stalls * 10 + d * 0.1;
+        if (score < best) { best = score; pad = [gx, gy]; }
+      }
+    }
     // Line the chopper up with the nearest aisle
     let ang = 0, bd = Infinity;
     for (const r of CAMPUS.roads) {
@@ -458,6 +635,13 @@ export class World {
       Math.abs(heightAtCampus(x + 4, y) - heightAtCampus(x - 4, y)) < 0.8 && Math.abs(heightAtCampus(x, y + 4) - heightAtCampus(x, y - 4)) < 0.8);
     // Facing the nearest street, like it's guarding the place
     this.places.tankSpot = [tank[0], -tank[1], Math.PI * 0.85];
+    // Forklift: parked beside the Trophy Coffee patio, forks toward the wall
+    if (this.trophy) {
+      const t = this.trophy;
+      const [fx, fy] = t.P(-9.5, 3.5);
+      const spot = spiral(fx, fy, 20, (x, y) => !nearBuilding(x, y, 2) && !this.pavedAt(x, y, 0.5) && !CAMPUS.roads.some((r) => r.kind !== 'trail' && distToPolyline(x, y, r.pts) < r.width / 2 + 2));
+      this.places.forkliftSpot = [spot[0], -spot[1], Math.atan2(-t.nx, t.ny)];
+    }
   }
 
   // The wall with the real entrance: the one by the building's mission spot, or else the
@@ -553,7 +737,7 @@ export class World {
     const cy = groundY(hx, hz - 22);
     const v = new THREE.Mesh(GEOM.box, wood); v.scale.set(0.6, 10, 0.6); v.position.set(hx, cy + 4, hz - 22); v.castShadow = true; this.scene.add(v);
     const hb = new THREE.Mesh(GEOM.box, wood); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, cy + 6.8, hz - 22); this.scene.add(hb);
-    this.colliders.addCircle(hx, hz - 22, 1);
+    this.colliders.addCircle(hx, hz - 22, 1, 'cross', cy + 9);
     const [bx, bz] = this.places.hillBase;
     const gap = Math.atan2(bz - hz, bx - hx);
     const rock = mat(0x9a8b74);
@@ -720,15 +904,35 @@ export class World {
     const { blds, fields, pools } = this._plantCheck;
     if (this.pavedAt(x, y, m)) return false;
     // Room for the parked tank and the helicopter's rotor
-    for (const [px, pz, , r] of [[...this.places.tankSpot, 6], [...this.places.helipad, 8]]) if (Math.hypot(x - px, y + pz) < r) return false;
+    const spots = [[...this.places.tankSpot, 6], [...this.places.helipad, 8]];
+    if (this.places.forkliftSpot) spots.push([...this.places.forkliftSpot, 3.5]);
+    for (const [px, pz, , r] of spots) if (Math.hypot(x - px, y + pz) < r) return false;
     for (const b of blds) {
       if (x < b.x0 - 1 || x > b.x1 + 1 || y < b.y0 - 1 || y > b.y1 + 1) continue;
       if (pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < 1) return false;
     }
     if (fields.some((p) => pointInPoly(x, y, p))) return false;
     if (pools.some((p) => pointInPoly(x, y, p))) return false;
+    for (const bp of this.backyardPools || []) if (Math.hypot(x - bp.x, y - bp.y) < 6.5 && pointInPoly(x, y, bp.deck)) return false;
     if (this.site.fountains.some((f) => Math.hypot(x - f.x, y - f.y) < f.plaza + 0.5)) return false;
     return true;
+  }
+
+  // Nearest building wall within reach of a campus point: { b, d, px, py } or null
+  nearestBuilding(x, y, reach) {
+    let best = null;
+    for (const b of this.buildings) {
+      const xs = b.poly.map((p) => p[0]), ys = b.poly.map((p) => p[1]);
+      if (x < Math.min(...xs) - reach || x > Math.max(...xs) + reach || y < Math.min(...ys) - reach || y > Math.max(...ys) + reach) continue;
+      for (let i = 0; i < b.poly.length; i++) {
+        const [ax, ay] = b.poly[i], [bx, by] = b.poly[(i + 1) % b.poly.length];
+        const ex = bx - ax, ey = by - ay, L2 = ex * ex + ey * ey || 1e-9;
+        const t = Math.max(0, Math.min(1, ((x - ax) * ex + (y - ay) * ey) / L2));
+        const px = ax + ex * t, py = ay + ey * t, d = Math.hypot(x - px, y - py);
+        if (d < reach && (!best || d < best.d)) best = { b, d, px, py };
+      }
+    }
+    return best;
   }
 
   // Every tree the LiDAR found, at its real spot, height and crown size
@@ -748,14 +952,28 @@ export class World {
       const lean = Math.hypot(dx, dy), maxLean = Math.min(1.5, h * 0.12);
       if (lean > maxLean) { dx *= maxLean / lean; dy *= maxLean / lean; }
       const [x, z] = W([tx, ty]);
-      const g = groundY(x, z);
+      // On a slope, plant the trunk at the low side so it never floats
+      const g = Math.min(groundY(x, z), groundY(x + 0.5, z), groundY(x - 0.5, z), groundY(x, z + 0.5), groundY(x, z - 0.5));
+      if (kind === 0) {
+        // Low, very wide LiDAR blobs made flat pancakes; tall bare trunks made lollipops
+        r = Math.min(r, h * 0.7 + 1);
+        cb = Math.min(cb, 0.55);
+        // A crown below the roofline mustn't poke through the building next to it
+        const nb = this.nearestBuilding(tx, ty, r + 1);
+        if (nb && g + Math.max(0.12, cb) * h < nb.b.top + 0.5) {
+          r = Math.max(1.6, Math.min(r, nb.d + 0.5));
+          // Lean away from the wall rather than into it
+          const ax = tx - nb.px, ay = ty - nb.py, al = Math.hypot(ax, ay) || 1;
+          if (dx * ax + dy * ay < 0) { dx = (ax / al) * 0.4; dy = (ay / al) * 0.4; }
+        }
+      }
       const tree = { x, z, g, h, r, cb: Math.max(0.12, Math.min(0.75, cb)) * h, cx: x + dx, cz: z - dy, rot: rng() * Math.PI * 2, c: rng() };
       if (style === 'canaryPalm') { kind = 1; tree.h = Math.max(h, 10); tree.trunkW = 1.7; tree.frond = 5; tree.cx = x; tree.cz = z; }
       else if (style === 'fanPalm') { kind = 1; tree.h = Math.max(h, 16); tree.trunkW = 0.75; tree.frond = 2.2; tree.cx = x; tree.cz = z; }
       else if (style === 'stonePine') { kind = 0; tree.cb = 0.68 * tree.h; tree.r = r * 1.15; tree.color = 0x3f5f33; }
       else if (style === 'crapeMyrtle') { kind = 0; tree.color = 0xd77aa8; }
       (kind === 1 ? palms : kind === 2 ? conifers : broad).push(tree);
-      if (this.inBounds(x, z, -2)) this.colliders.addCircle(x, z, Math.min(0.9, 0.3 + tree.h * 0.025 * (tree.trunkW || 1)), 'tree');
+      if (this.inBounds(x, z, -2)) this.colliders.addCircle(x, z, Math.min(0.9, 0.3 + tree.h * 0.025 * (tree.trunkW || 1)), 'tree', tree.g + tree.h);
     }
     // Scenery beyond the LiDAR area: oaks in the canyons around (no collision)
     const outside = [];
@@ -912,13 +1130,13 @@ export class World {
           const [px, pz] = at(sx * len, sz * wid);
           const pg = groundY(px, pz);
           posts.push([m4.compose(v.set(px, (pg + gy + h) / 2, pz), q, sc.set(0.25, gy + h - pg, 0.25)).clone(), campus && !inLot ? CAMPUS_STYLE.trim : 0x6c6e70]);
-          this.colliders.addCircle(px, pz, 0.25);
+          this.colliders.addCircle(px, pz, 0.25, 'carport', gy + h);
         }
       } else {
         // A shed or outbuilding: stucco on campus, plain siding elsewhere, with a roof cap
         walls.push([m4.compose(v.set(x, gy + (h - 1) / 2, z), q, sc.set(len, h + 1, wid)).clone(), campus ? CAMPUS_STYLE.wall : 0xd8cdb8]);
         caps.push([m4.compose(v.set(x, gy + h + 0.1, z), q, sc.set(len + 0.4, 0.25, wid + 0.4)).clone(), campus ? CAMPUS_STYLE.roof : 0x7a6a5a]);
-        this.colliders.addPoly([at(-len / 2, -wid / 2), at(len / 2, -wid / 2), at(len / 2, wid / 2), at(-len / 2, wid / 2)], 'structure');
+        this.colliders.addPoly([at(-len / 2, -wid / 2), at(len / 2, -wid / 2), at(len / 2, wid / 2), at(-len / 2, wid / 2)], 'structure', gy + h + 0.3);
       }
     }
     const byColor = new Map();
@@ -1022,6 +1240,25 @@ export class World {
       return [x, z];
     }
     return near ? [...near] : [...this.places.spawn];
+  }
+
+  // Highest thing to stand or land on at a world point: the ground or a building's roof
+  surfaceAt(x, z) {
+    let h = groundY(x, z);
+    for (const r of this.roofSurfaces || []) {
+      if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
+      const p = r.pos;
+      for (let i = 0; i < p.length; i += 9) {
+        const ax = p[i], az = p[i + 2], bx = p[i + 3], bz = p[i + 5], cx = p[i + 6], cz = p[i + 8];
+        const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+        if (Math.abs(d) < 1e-9) continue;
+        const u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+        const v = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+        if (u < -1e-4 || v < -1e-4 || u + v > 1 + 1e-4) continue;
+        h = Math.max(h, u * p[i + 1] + v * p[i + 4] + (1 - u - v) * p[i + 7]);
+      }
+    }
+    return h;
   }
 
   // Height of a speed bump at a world point (cars bounce over them)

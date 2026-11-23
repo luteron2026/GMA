@@ -397,7 +397,7 @@ export function buildStreetscape(world) {
     m4.compose(v3.set(p.x, g - 0.3, -p.y), q.identity(), sc.set(1, 11, 1));
     poles.setMatrixAt(i, m4);
     boxes.add(wood, p.x, g + 10.1, -p.y, 0.14, 0.14, 2.6, ang(p.ny, -p.nx));
-    colliders.addCircle(p.x, -p.y, 0.3);
+    colliders.addCircle(p.x, -p.y, 0.3, 'pole', g + 11);
     if (p.light) {
       // Arm reaching over the road (toward it: -n)
       const ax = p.x - p.nx * 1.4, ay = p.y - p.ny * 1.4;
@@ -554,7 +554,7 @@ export function buildStreetscape(world) {
         const fl = new THREE.Mesh(PLANE, flagMats[k % 2]);
         fl.scale.set(1.6, 1.0, 1); fl.position.set(x + st.tx * 0.85, g + 8.3, -(y + st.ty * 0.85)); fl.rotation.y = Math.atan2(st.ty, st.tx);
         scene.add(fl);
-        colliders.addCircle(x, -y, 0.2);
+        colliders.addCircle(x, -y, 0.2, 'flagpole', g + 9.3);
       }
     } else if (p.kind === 'hydrant') {
       const [x, y] = offRoad(x0, y0, 1.6);
@@ -588,7 +588,7 @@ export function buildStreetscape(world) {
         boxes.add(black, x, g + 4.5, -y, 0.2, 9, 0.2, 0);
         boxes.add(black, x + nx * 0.5, g + 9, -(y + ny * 0.5), 1.2, 0.25, 0.5, ang(nx, ny));
         boxes.add(0xfff2c8, x + nx * 0.5, g + 8.86, -(y + ny * 0.5), 1.0, 0.04, 0.38, ang(nx, ny));
-        colliders.addCircle(x, -y, 0.25);
+        colliders.addCircle(x, -y, 0.25, 'light', g + 9.3);
       }
     } else if (p.kind === 'trashBins') {
       const [x, y] = offRoad(x0, y0, 1.4);

@@ -16,10 +16,10 @@ function stallRows(stalls) {
       if (Math.abs(x1 - x2) > 4 || Math.abs(y1 - y2) > 4) continue;
       let da = Math.abs(a1 - a2) % (Math.PI * 2);
       if (da > Math.PI) da = Math.PI * 2 - da;
-      if (da > 0.12) continue;
+      if (da > 0.3) continue; // rows bend a little along curved aisles
       const tx = Math.cos(a1), ty = Math.sin(a1);
       const along = Math.abs((x2 - x1) * tx + (y2 - y1) * ty), side = Math.abs((x2 - x1) * -ty + (y2 - y1) * tx);
-      if (along < 0.8 && side > 2 && side < 3.6) parent[find(i)] = find(j);
+      if (along < 1.2 && side > 2 && side < 3.8) parent[find(i)] = find(j);
     }
   }
   const rows = new Map();
@@ -48,13 +48,26 @@ function panelTexture() {
 }
 
 export function buildSolarCarports(world, boxes) {
-  const rows = stallRows(world.data.stalls).filter((r) => r.length >= 4);
+  // Straight rows get long canopies; stalls fanned around a curve get one panel each,
+  // which line up into a curved canopy
+  const rows = [], singles = [];
+  for (const r of stallRows(world.data.stalls)) {
+    if (r.length >= 3) rows.push(r);
+    else singles.push(...r);
+  }
+  // Only stalls that are part of a curved run (two neighbors close by), not strays at row ends
+  for (const st of singles) {
+    const near = singles.filter((o) => o !== st && Math.hypot(o[0] - st[0], o[1] - st[1]) < 4.2).length;
+    if (near >= 2) rows.push([st]);
+  }
   const carports = world.lotCarports || [];
   const pos = [], uv = [], under = [];
   const columns = [], placed = [];
+  world.solarCanopies = placed;
   let count = 0;
   for (const row of rows) {
-    const a = row[0][2];
+    // Average heading of the row (it may bend slightly)
+    const a = Math.atan2(row.reduce((t, r) => t + Math.sin(r[2]), 0), row.reduce((t, r) => t + Math.cos(r[2]), 0));
     const dx = Math.cos(a), dy = Math.sin(a); // from the back of the stall toward its aisle
     const px = -dy, py = dx; // along the row
     let s0 = Infinity, s1 = -Infinity, cx = 0, cy = 0;
@@ -65,10 +78,26 @@ export function buildSolarCarports(world, boxes) {
     // Split long rows into canopies of at most ~10 stalls
     const L = s1 - s0 + STALL_W;
     const parts = Math.max(1, Math.round(L / 29));
+    const back = -STALL_L / 2 - 0.2, front = STALL_L / 2 - 0.6;
+    const P = (s, d) => [cx + px * s + dx * d, cy + py * s + dy * d];
+    const [hx, hz] = world.places.helipad;
+    const nearPad = (a0, a1) => {
+      const f = [P(a0, back), P(a1, back), P(a1, front), P(a0, front)];
+      return f.some(([x, y]) => Math.hypot(x - hx, y + hz) < 7.5) || Math.hypot((f[0][0] + f[2][0]) / 2 - hx, (f[0][1] + f[2][1]) / 2 + hz) < 8;
+    };
+    const spans = [];
     for (let k = 0; k < parts; k++) {
       const a0 = s0 - STALL_W / 2 + (L * k) / parts + 0.15, a1 = s0 - STALL_W / 2 + (L * (k + 1)) / parts - 0.15;
-      const back = -STALL_L / 2 - 0.2, front = STALL_L / 2 - 0.6;
-      const P = (s, d) => [cx + px * s + dx * d, cy + py * s + dy * d];
+      // A canopy reaching under the helicopter's rotor is cut back to the stalls clear of it
+      if (nearPad(a0, a1) && row.length > 1) {
+        for (const [x, y] of row) {
+          const sc = (x - cx) * px + (y - cy) * py;
+          if (sc < a0 || sc > a1) continue;
+          spans.push([sc - STALL_W / 2 + 0.08, sc + STALL_W / 2 - 0.08]);
+        }
+      } else spans.push([a0, a1]);
+    }
+    for (const [a0, a1] of spans) {
       const corner = (s, d, h) => { const [x, y] = P(s, d); return [x, heightAtCampus(x, y) + h, -y]; };
       // Level along the row at each end: use the highest ground under that end
       const lift = (d) => {
@@ -78,10 +107,10 @@ export function buildSolarCarports(world, boxes) {
       };
       // Where two rows meet at a corner, the first canopy wins
       const foot = [P(a0, back), P(a1, back), P(a1, front), P(a0, front)];
-      if (placed.some((f) => obbOverlap(f, foot))) continue;
-      // Keep the helipad open to the sky
-      const [hx, hz] = world.places.helipad;
-      if (foot.some(([x, y]) => Math.hypot(x - hx, y + hz) < 10) || Math.hypot((foot[0][0] + foot[2][0]) / 2 - hx, (foot[0][1] + foot[2][1]) / 2 + hz) < 12) continue;
+      // (tested on slightly shrunk outlines so panels fanned around a curve can touch)
+      const shrink = (f) => { const mx = (f[0][0] + f[2][0]) / 2, my = (f[0][1] + f[2][1]) / 2; return f.map(([x, y]) => [mx + (x - mx) * 0.8, my + (y - my) * 0.8]); };
+      if (placed.some((f) => obbOverlap(shrink(f), shrink(foot)))) continue;
+      if (nearPad(a0, a1)) continue; // keep the helipad open to the sky
       placed.push(foot);
       const gb = lift(back), gf = lift(front);
       const bh = gb + BACK_H, fh = Math.max(gf + FRONT_H, bh + 0.4);
@@ -92,9 +121,9 @@ export function buildSolarCarports(world, boxes) {
       for (const k3 of [0, 2, 1, 0, 3, 2]) { pos.push(...q[k3]); uv.push(...t[k3]); }
       for (const k3 of [0, 1, 2, 0, 2, 3]) under.push(...q[k3].map((v, i) => (i === 1 ? v - 0.12 : v)));
       // Columns along the back with a beam reaching forward under the panels
-      const n = Math.max(2, Math.round(span / 8) + 1);
+      const n = span < 4 ? 1 : Math.max(2, Math.round(span / 8) + 1);
       for (let c = 0; c < n; c++) {
-        const s = a0 + 0.6 + ((span - 1.2) * c) / (n - 1);
+        const s = n === 1 ? (a0 + a1) / 2 : a0 + 0.6 + ((span - 1.2) * c) / (n - 1);
         const [x, y] = P(s, back - 0.25);
         if (columns.some(([ox, oy]) => Math.hypot(ox - x, oy - y) < 0.9)) continue;
         const g = heightAtCampus(x, y);

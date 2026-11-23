@@ -8,6 +8,7 @@ import { CORE, terrainStride, heightAtCampus } from './terrain.js';
 import { pointInPoly, distToPolyline } from './physics.js';
 import { offsetLine } from './geo.js';
 import { STREETS } from './data/streetscape.js';
+import { paintCourts } from './sports.js';
 
 export const PAVE = {
   street: '#3d4046',
@@ -21,7 +22,7 @@ export const PAVE = {
 const LINE = { white: '#efefea', yellow: '#f2c94c', red: '#c4342b' };
 
 // Draw order (higher wins where surfaces overlap)
-const LAYER = { walk: 1, plaza: 1, lot: 2, driveway: 3, aisle: 4, service: 5, street: 6, paint: 7 };
+const LAYER = { walk: 1, plaza: 1, lot: 2, courtBase: 2.3, courtTop: 2.6, driveway: 3, aisle: 4, service: 5, street: 6, paint: 7 };
 const DECAL = 8;
 
 // ---------- draping ----------
@@ -269,6 +270,9 @@ export function buildSurfaces(world) {
     if (m.text === 'STOP') S.paint.rect(m.x + m.hx * 3.95, m.y + m.hy * 3.95, m.hy, -m.hx, 3.4, 0.45, LINE.white);
   }
 
+  // Pickleball and volleyball courts
+  if (world.courts) paintCourts(S, world.courts);
+
   // Helipad in the Reese Center lot: a yellow ring around a white H
   if (world.places.helipad) {
     const [hx, hz, ha] = world.places.helipad;
@@ -419,6 +423,7 @@ export function planWalkways(world, doorEdge) {
     return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
   });
   const decks = world.site.pools.map((p) => p.deck);
+  for (const b of [world.courts?.block, world.courts?.sandBlock]) if (b) decks.push(b.outline);
   const inBuilding = (x, y, m = 0.6) => decks.some((d) => pointInPoly(x, y, d)) || buildings.some((b, i) => {
     const [x0, x1, y0, y1] = bbox[i];
     if (x < x0 - m || x > x1 + m || y < y0 - m || y > y1 + m) return false;
@@ -435,19 +440,8 @@ export function planWalkways(world, doorEdge) {
     return out;
   };
 
-  // 1. Entrances: a pad at the door, then the shortest clear walk to pavement
-  const doors = [];
-  for (const b of buildings) {
-    if (!b.name) continue;
-    const e = doorEdge(b);
-    if (!e) continue;
-    const { mx, my, nx, ny, tx, ty } = e;
-    const pw = Math.min(8, e.len - 0.5);
-    const cx = mx + nx * 1.6, cy = my + ny * 1.6;
-    pads.push([[cx - tx * pw / 2 - nx * 1.6, cy - ty * pw / 2 - ny * 1.6], [cx + tx * pw / 2 - nx * 1.6, cy + ty * pw / 2 - ny * 1.6],
-      [cx + tx * pw / 2 + nx * 1.6, cy + ty * pw / 2 + ny * 1.6], [cx - tx * pw / 2 + nx * 1.6, cy - ty * pw / 2 + ny * 1.6]]);
-    const s = [mx + nx * 3, my + ny * 3];
-    doors.push({ b, s });
+  // Shortest clear walk from an entrance (start, then s just outside it) to a drive or lot
+  const connect = (start, s) => {
     const cands = [];
     for (const r of drives) {
       // nearest point on the road edge
@@ -474,7 +468,6 @@ export function planWalkways(world, doorEdge) {
       }
     }
     cands.sort((p, q) => p[0] - q[0]);
-    const start = [mx + nx * 0.5, my + ny * 0.5];
     for (const [d, p] of cands.slice(0, 12)) {
       if (d > 70) break;
       const pts = samples(s, p);
@@ -482,6 +475,28 @@ export function planWalkways(world, doorEdge) {
       walks.push({ pts: [start, s, p], width: 2.4 });
       break;
     }
+  };
+
+  // 1. Entrances: a pad at the door, then the shortest clear walk to pavement
+  const doors = [];
+  for (const b of buildings) {
+    if (!b.name) continue;
+    const e = doorEdge(b);
+    if (!e) continue;
+    const { mx, my, nx, ny, tx, ty } = e;
+    const pw = Math.min(8, e.len - 0.5);
+    const cx = mx + nx * 1.6, cy = my + ny * 1.6;
+    pads.push([[cx - tx * pw / 2 - nx * 1.6, cy - ty * pw / 2 - ny * 1.6], [cx + tx * pw / 2 - nx * 1.6, cy + ty * pw / 2 - ny * 1.6],
+      [cx + tx * pw / 2 + nx * 1.6, cy + ty * pw / 2 + ny * 1.6], [cx - tx * pw / 2 + nx * 1.6, cy - ty * pw / 2 + ny * 1.6]]);
+    const s = [mx + nx * 3, my + ny * 3];
+    doors.push({ b, s });
+    connect([mx + nx * 0.5, my + ny * 0.5], s);
+  }
+  // The pickleball court gate gets a walk too
+  if (world.courts?.block) {
+    const bl = world.courts.block, g = bl.gatePoint;
+    const dx = g[0] - bl.cx, dy = g[1] - bl.cy, L = Math.hypot(dx, dy);
+    connect(g, [g[0] + (dx / L) * 2, g[1] + (dy / L) * 2]);
   }
 
   // 2. Sidewalks along campus drives, wherever there's room

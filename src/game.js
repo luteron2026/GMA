@@ -10,8 +10,9 @@ import { Imp, Projectile } from './enemies.js';
 import { Missions } from './missions.js';
 import { loadSave, writeSave, clearSave, hasProgress } from './save.js';
 import { VEHICLE_TYPES } from './models.js';
-import { clamp, lerp, mulberry32 } from './physics.js';
+import { clamp, lerp, mulberry32, pointInPoly } from './physics.js';
 import { groundY } from './terrain.js';
+import { Pickleball } from './sports.js';
 
 const BORROW_LINES = [
   'You shared Romans 12:13 ("practice hospitality"). The driver insists you borrow the car.',
@@ -149,6 +150,7 @@ export class Game {
     this.spawnVehicle('tank', tk[0], tk[1], tk[2]);
     const hp = w.places.helipad;
     this.spawnVehicle('heli', hp[0], hp[1], hp[2]);
+    if (w.places.forkliftSpot) { const f = w.places.forkliftSpot; this.spawnVehicle('forklift', f[0], f[1], f[2]); }
     // Traffic on the real streets, carts on the campus service roads
     const carLanes = w.lanes.filter((l) => l.kind === 'car' && l.length > 150);
     for (const lane of carLanes) {
@@ -156,16 +158,18 @@ export class Game {
       for (let i = 0; i < n; i++) {
         const v = this.spawnVehicle(['sedan', 'truck', 'sedan', 'van'][Math.floor(rng() * 4)], 0, 0, 0);
         v.setAI(lane, Math.floor((i / n) * (lane.pts.length - 1)));
+        v.homeLane = { lane, idx: Math.floor((i / n) * (lane.pts.length - 1)) };
       }
     }
     const cartLanes = w.lanes.filter((l) => l.kind === 'cart').sort((a, b) => b.length - a.length);
     for (const lane of cartLanes.slice(0, this.lowSpec ? 3 : 6)) {
       const v = this.spawnVehicle('cart', 0, 0, 0);
       v.setAI(lane, 0);
+      v.homeLane = { lane, idx: 0 };
     }
     // Pedestrians around campus hot spots
     const spots = ['grill', 'library', 'reece', 'chapelDoor', 'waldock', 'smith', 'hotchkiss', 'dixon', 'slight', 'sweazy', 'quad', 'stadium',
-      'gym', 'king', 'biblical', 'music', 'education', 'herwaldtLawn', 'northLawn', 'placeritos', 'westLot', 'eastLot'];
+      'gym', 'king', 'biblical', 'music', 'education', 'herwaldtLawn', 'northLawn', 'placeritos', 'westLot', 'eastLot', 'trophy'];
     const count = this.lowSpec ? 30 : 50;
     for (let i = 0; i < count; i++) {
       const spot = w.places[spots[i % spots.length]];
@@ -177,8 +181,39 @@ export class Game {
 
   spawnVehicle(type, x, z, heading) {
     const v = new Vehicle(this, type, x, z, heading);
+    v.home = { x, z, heading }; // where the reset button puts it back
     this.vehicles.push(v);
     return v;
+  }
+
+  // Put every vehicle back where it started: parked ones in their spots, traffic back on
+  // its roads with drivers, the tank, chopper and forklift on their pads
+  resetVehicles() {
+    if (this.state !== 'play' && this.state !== 'pause') return;
+    if (this.pickle) this.endPickleball();
+    if (this.player.vehicle) {
+      const v = this.player.vehicle;
+      const up = v.spec.air && v.y - groundY(v.x, v.z) > 0.3;
+      if (this.ride) this.endRide(false);
+      this.player.exit();
+      if (up) {
+        // Step out of a hovering or roof-parked chopper onto open ground below
+        let r = { x: this.player.x, z: this.player.z };
+        for (let i = 0; i < 4; i++) r = this.world.colliders.resolve(r.x, r.z, 0.7);
+        this.player.teleport(r.x, r.z, this.player.heading);
+      }
+    }
+    // Vehicles brought back from a save (not part of the starting lineup) go away
+    for (const v of this.vehicles.filter((q) => q.fromSave)) { v.dispose(); this.vehicles.splice(this.vehicles.indexOf(v), 1); }
+    for (const v of this.vehicles) {
+      v.speed = 0; v.steer = 0; v.climb = 0; v.alt = 0; v.y = undefined; v.fireT = 0; v.forksUp = false;
+      if (v.homeLane) v.setAI(v.homeLane.lane, v.homeLane.idx);
+      else { v.x = v.home.x; v.z = v.home.z; v.heading = v.home.heading; }
+      v.sync(0);
+    }
+    // Drivers who handed over their cars were left standing around; they're back behind the wheel
+    for (const n of this.npcs.filter((q) => q.fromCar && !q.need)) this.removeNPC(n);
+    this.toast('🔄 All vehicles are back where they started.');
   }
 
   spawnMissionNPC(x, z) {
@@ -229,7 +264,8 @@ export class Game {
       // There's only one tank and one chopper: take the parked one along
       const one = VEHICLE_TYPES[s.vehicle.type].unique && this.vehicles.find((q) => q.type === s.vehicle.type);
       const v = one || this.spawnVehicle(s.vehicle.type, x, z, s.heading);
-      if (one) { v.x = x; v.z = z; v.heading = s.heading; v.alt = 0; }
+      if (!one) v.fromSave = true;
+      if (one) { v.x = x; v.z = z; v.heading = s.heading; v.alt = 0; v.y = undefined; v.climb = 0; }
       v.collideWorld();
       v.everBorrowed = true;
       this.player.teleport(v.x, v.z, s.heading);
@@ -307,7 +343,7 @@ export class Game {
 
   pause(on) {
     if (this.state === 'title' || this.state === 'ending') return;
-    this.state = on ? 'pause' : 'play';
+    this.state = on ? 'pause' : (this.pickle ? 'pickle' : 'play');
     document.getElementById('pause').classList.toggle('show', on);
     document.getElementById('abandon').style.display = this.missions.active ? '' : 'none';
     this.clock.getDelta();
@@ -416,6 +452,18 @@ export class Game {
     }
     const mi = this.missions.interaction();
     if (mi) return mi;
+    // Trophy Coffee
+    const tc = this.world.places.trophy;
+    if (!p.vehicle && tc && Math.hypot(tc[0] - p.x, tc[1] - p.z) < 4) {
+      return { text: '☕ Order a cold brew at <b>Trophy Coffee</b> (5 Chapel Credits)', fn: () => this.buyCoffee() };
+    }
+    // Pickleball: walk onto the courts at West Campus
+    const cb = this.world.courts && this.world.courts.block;
+    if (!p.vehicle && cb && !this.missions.active && pointInPoly(p.x, -p.z, cb.outline)) {
+      let best = null, bd = Infinity;
+      for (const c of this.world.courts.pickle) { const d = Math.hypot(c.cx - p.x, c.cy + p.z); if (d < bd) { bd = d; best = c; } }
+      if (best) return { text: '🏓 Play <b>pickleball</b>', fn: () => this.startPickleball(best) };
+    }
     // Offer rides from a vehicle
     if (p.vehicle && !this.ride && Math.abs(p.vehicle.speed) < 3) {
       const npc = this.nearestNPC(7, (n) => n.need && n.need.type === 'ride');
@@ -467,12 +515,51 @@ export class Game {
     v.speed = 0;
     p.enter(v);
     if (v.spec.air) this.toast(this.input.isTouch ? '🚁 Hold <b>📖</b> to climb, <b>⚡</b> to descend. Stick flies and turns.' : '🚁 Hold <b>Space</b> to climb, <b>Shift</b> to descend. <b>W/S</b> fly, <b>A/D</b> turn.');
+    else if (v.spec.forklift) this.toast(this.input.isTouch ? '🏗️ The back wheels steer. <b>📖</b> raises and lowers the forks.' : '🏗️ The back wheels steer. <b>Space</b> raises and lowers the forks.');
     else if (v.spec.tracks) this.toast(this.input.isTouch ? '🪖 Tracks turn in place. <b>📖</b> fires a Hallelujah Shell.' : '🪖 Tracks turn in place. <b>Space</b> fires a Hallelujah Shell.');
+  }
+
+  buyCoffee() {
+    if (this.save.credits < 5) { this.toast('☕ The barista smiles: "On the house. Pay it forward."'); this.player.joy = 100; return; }
+    this.addCredits(-5);
+    this.player.joy = 100;
+    const lines = ['☕ Cold brew acquired. Joy fully restored. Theology now 20% easier to read.', '☕ An oat milk latte with a little cross in the foam. Joy restored.', '☕ "Name for the order?" You said your name. They spelled it wrong. Joy restored anyway.'];
+    this.toast(lines[Math.floor(Math.random() * lines.length)]);
+    this.audio.pickup();
+  }
+
+  startPickleball(court) {
+    this.pickle = new Pickleball(this, court);
+    this.state = 'pickle';
+    this.hud.setPrompt(null);
+    this.toast(`🏓 ${this.pickle.op.name} is up for a game. First to 7, win by 2.`);
+  }
+
+  endPickleball() {
+    const pk = this.pickle;
+    if (!pk) return;
+    pk.dispose();
+    this.pickle = null;
+    // Back on your feet beside the court you played on
+    const [x, , z] = pk.W(pk.me.u, clamp(pk.me.v, -2, 2));
+    const r = this.world.colliders.resolve(x, z, 0.6);
+    this.player.teleport(r.x, r.z, Math.atan2(pk.c, -pk.s));
+    this.state = 'play';
   }
 
   exitVehicle() {
     if (this.ride) this.endRide(false);
+    const v = this.player.vehicle;
+    const onRoof = v && v.spec.air && v.y - groundY(v.x, v.z) > 1.5;
     this.player.exit();
+    if (onRoof) {
+      // Down the roof ladder to the ground beside the building
+      const p = this.player;
+      let r = { x: p.x, z: p.z };
+      for (let i = 0; i < 4; i++) r = this.world.colliders.resolve(r.x, r.z, 0.7);
+      p.teleport(r.x, r.z, p.heading);
+      this.toast('🪜 You climb down the roof ladder. The chopper stays parked up top.');
+    }
   }
 
   helpNPC(npc) {
@@ -528,9 +615,10 @@ export class Game {
       this.toast(m ? '🔇 Sound off' : '🔊 Sound on');
       document.getElementById('btn-mute').textContent = m ? '🔇' : '🔊';
     }
-    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause')) this.pause(this.state === 'play');
+    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause' || this.state === 'pickle')) this.pause(this.state !== 'pause');
 
     if (this.state === 'play') this.update(dt);
+    else if (this.state === 'pickle') { this.pickle.update(dt); this.updateWorldOnly(dt); this.fadeLabels(); }
     else if (this.state === 'title') this.titleCam(dt);
     else if (this.state === 'faint' || this.state === 'ending') { this.updateWorldOnly(dt); this.updateCamera(dt); }
 
@@ -590,6 +678,7 @@ export class Game {
     this.world.update(dt, this.t);
     this.audio.setEngine(p.vehicle ? Math.abs(p.vehicle.speed) / p.vehicle.spec.maxSpeed : 0, !!p.vehicle);
     this.updateCamera(dt);
+    this.fadeLabels();
     this.updateSun();
     this.hud.update();
   }
@@ -649,11 +738,12 @@ export class Game {
     const py = v ? v.mesh.position.y : groundY(p.x, p.z);
     this.camPos.y = lerp(this.camPos.y, py + height, k);
     // Keep the camera out of buildings
-    const r = this.world.colliders.resolve(this.camPos.x, this.camPos.z, 0.6);
+    // (only things taller than the camera: up in the chopper it isn't shoved around by roofs)
+    const r = this.world.colliders.resolve(this.camPos.x, this.camPos.z, 0.6, this.camPos.y);
     const lookX = p.x + fx * 3, lookZ = p.z + fz * 3;
     this.camLook.set(lookX, py + 1.4, lookZ);
     // Never sink into a hillside behind the player
-    this.camPos.y = Math.max(this.camPos.y, groundY(r.x, r.z) + 1.3);
+    this.camPos.y = Math.max(this.camPos.y, this.world.surfaceAt(r.x, r.z) + 1.3); // or a roof
     this.camera.position.set(r.x, this.camPos.y, r.z);
     if (this.shakeAmt > 0) {
       this.camera.position.x += (Math.random() - 0.5) * this.shakeAmt;
@@ -661,6 +751,12 @@ export class Game {
       this.shakeAmt = Math.max(0, this.shakeAmt - dt * 2);
     }
     this.camera.lookAt(this.camLook);
+  }
+
+  // Building name tags hide when the camera is right next to one (e.g. on a rooftop)
+  fadeLabels() {
+    const c = this.camera.position;
+    for (const l of this.world.labels) l.visible = !this.pickle && c.distanceToSquared(l.position) > 16 * 16;
   }
 
   updateSun() {

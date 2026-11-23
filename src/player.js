@@ -109,6 +109,12 @@ export class Player {
 
   horn() {
     const g = this.game, v = this.vehicle;
+    if (v.spec.forklift) {
+      v.forksUp = !v.forksUp;
+      g.audio.beep();
+      g.toast(v.forksUp ? '⬆️ Forks up. Mind the coffee beans.' : '⬇️ Forks down.');
+      return;
+    }
     if (v.hornCd > 0) return;
     v.hornCd = 4;
     g.audio.horn();

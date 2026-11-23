@@ -115,6 +115,7 @@ body.playing #hud { display: block; }
 }
 #btn-pause { right: calc(190px + var(--safe-r)); }
 #btn-mute { right: calc(236px + var(--safe-r)); }
+#btn-vreset { right: calc(282px + var(--safe-r)); }
 
 /* ---------- touch controls ---------- */
 #touch { display: none; position: fixed; inset: 0; pointer-events: none; }
@@ -148,6 +149,7 @@ body.touch #minimap { left: calc(184px + var(--safe-l)); bottom: calc(24px + var
 body.touch #prompt { bottom: calc(150px + var(--safe-b)); }
 body.touch #btn-pause { right: auto; left: calc(14px + var(--safe-l)); top: auto; bottom: calc(178px + var(--safe-b)); }
 body.touch #btn-mute { right: auto; left: calc(60px + var(--safe-l)); top: auto; bottom: calc(178px + var(--safe-b)); }
+body.touch #btn-vreset { right: auto; left: calc(106px + var(--safe-l)); top: auto; bottom: calc(178px + var(--safe-b)); }
 
 /* ---------- overlays ---------- */
 .overlay {
@@ -213,6 +215,7 @@ body.touch #btn-mute { right: auto; left: calc(60px + var(--safe-l)); top: auto;
   .credits { font-size: 18px; }
   #btn-pause { right: auto; left: calc(14px + var(--safe-l)); top: auto; bottom: calc(180px + var(--safe-b)); }
   #btn-mute { right: auto; left: calc(60px + var(--safe-l)); top: auto; bottom: calc(180px + var(--safe-b)); }
+  #btn-vreset { right: auto; left: calc(106px + var(--safe-l)); top: auto; bottom: calc(180px + var(--safe-b)); }
   .toast { font-size: 13px; }
 }
 @media (max-height: 500px) {
