@@ -132,6 +132,7 @@ export class Game {
       used.add(k);
       const [x, y, a] = stalls[k];
       const r = rng();
+      if (Math.hypot(x - w.places.helipad[0], -y - w.places.helipad[1]) < 11) continue; // keep the pad clear
       const type = r < 0.62 ? 'sedan' : r < 0.78 ? 'van' : r < 0.92 ? 'truck' : 'cart';
       this.spawnVehicle(type, x, -y, Math.atan2(-Math.cos(a), Math.sin(a)));
     }
@@ -142,6 +143,12 @@ export class Game {
     }
     const [dx, dz] = w.places.deanCart;
     this.spawnVehicle('deanCart', dx, dz, Math.PI / 2);
+    // The ROTC-surplus tank on the North Campus lawn, and the chopper on its pad in the
+    // Reese Center lot
+    const tk = w.places.tankSpot;
+    this.spawnVehicle('tank', tk[0], tk[1], tk[2]);
+    const hp = w.places.helipad;
+    this.spawnVehicle('heli', hp[0], hp[1], hp[2]);
     // Traffic on the real streets, carts on the campus service roads
     const carLanes = w.lanes.filter((l) => l.kind === 'car' && l.length > 150);
     for (const lane of carLanes) {
@@ -219,7 +226,10 @@ export class Game {
     const [x, z] = s.pos;
     if (!this.world.inBounds(x, z, 3)) return;
     if (s.vehicle && VEHICLE_TYPES[s.vehicle.type]) {
-      const v = this.spawnVehicle(s.vehicle.type, x, z, s.heading);
+      // There's only one tank and one chopper: take the parked one along
+      const one = VEHICLE_TYPES[s.vehicle.type].unique && this.vehicles.find((q) => q.type === s.vehicle.type);
+      const v = one || this.spawnVehicle(s.vehicle.type, x, z, s.heading);
+      if (one) { v.x = x; v.z = z; v.heading = s.heading; v.alt = 0; }
       v.collideWorld();
       v.everBorrowed = true;
       this.player.teleport(v.x, v.z, s.heading);
@@ -412,6 +422,7 @@ export class Game {
       if (npc) return { text: `Offer a ride to <b>${npc.need.destName}</b>`, fn: () => this.startRide(npc) };
     }
     if (p.vehicle) {
+      if (p.vehicle.alt > 0.3) return { text: 'Land to get out (hold <b>Shift</b> / ⚡)', fn: () => this.toast('Hold Shift (⚡) to set the chopper down first.') };
       if (Math.abs(p.vehicle.speed) < 4) return { text: 'Get out', fn: () => this.exitVehicle() };
       return null;
     }
@@ -455,6 +466,8 @@ export class Game {
     v.everBorrowed = true;
     v.speed = 0;
     p.enter(v);
+    if (v.spec.air) this.toast(this.input.isTouch ? '🚁 Hold <b>📖</b> to climb, <b>⚡</b> to descend. Stick flies and turns.' : '🚁 Hold <b>Space</b> to climb, <b>Shift</b> to descend. <b>W/S</b> fly, <b>A/D</b> turn.');
+    else if (v.spec.tracks) this.toast(this.input.isTouch ? '🪖 Tracks turn in place. <b>📖</b> fires a Hallelujah Shell.' : '🪖 Tracks turn in place. <b>Space</b> fires a Hallelujah Shell.');
   }
 
   exitVehicle() {
@@ -600,7 +613,7 @@ export class Game {
     this.nearMissCd -= dt;
     for (const v of this.vehicles) {
       const sp = Math.abs(v.speed);
-      if (sp < 3) continue;
+      if (sp < 3 || v.airborne) continue;
       for (const n of this.npcs) {
         if (!n.visible || n.state === 'dive') continue;
         if (Math.abs(n.x - v.x) > 8 || Math.abs(n.z - v.z) > 8) continue;

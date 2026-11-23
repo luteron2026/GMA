@@ -127,6 +127,17 @@ export const VEHICLE_TYPES = {
     label: 'Outreach Team Van', maxSpeed: 20, accel: 7, brake: 14, turn: 1.6, width: 2.1, length: 5.0,
     colors: [0xf5f5f0, 0x1f3a6e],
   },
+  // Tracked: turns in place, shrugs off other cars, and the horn button fires a (harmless)
+  // Hallelujah shell
+  tank: {
+    label: 'Mustang Tank (ROTC surplus)', maxSpeed: 12, accel: 4.5, brake: 12, turn: 1.25, width: 3.4, length: 7.2,
+    colors: [0x5b6340], tracks: true, heavy: true, unique: true,
+  },
+  // Flies: Space climbs, Shift descends, W/S forward/back, A/D turn
+  heli: {
+    label: 'Prayer Chopper', maxSpeed: 32, accel: 9, brake: 10, turn: 1.4, width: 2.6, length: 8.5,
+    colors: [0x1f3a6e], air: true, unique: true,
+  },
 };
 
 export function makeVehicle(type, color) {
@@ -141,6 +152,9 @@ export function makeVehicle(type, color) {
   const W = t.width, L = t.length;
   const wheels = [];
   const wheelR = type === 'cart' || type === 'deanCart' ? 0.28 : 0.38;
+
+  if (type === 'tank') return makeTank(g, body, dark, light);
+  if (type === 'heli') return makeHeli(g, body, dark, glass, light, red);
 
   if (type === 'cart' || type === 'deanCart') {
     part(G.box, body, W, 0.35, L, 0, 0.45, 0, g);
@@ -184,6 +198,100 @@ export function makeVehicle(type, color) {
   }
   g.userData.wheels = wheels;
   g.userData.wheelR = wheelR;
+  return g;
+}
+
+function makeTank(g, body, dark, light) {
+  const t = VEHICLE_TYPES.tank, W = t.width, L = t.length;
+  const track = mat(0x2a2a26), wheelM = mat(0x3d4030), gold = mat(0xc9a227), navy = mat(0x1f3a6e);
+  const wheels = [];
+  for (const sx of [-1, 1]) {
+    // Track run with the road wheels inside it
+    part(G.box, track, 0.7, 1.0, L, sx * (W / 2 - 0.35), 0.55, 0, g);
+    part(G.box, track, 0.72, 0.5, L * 0.12, sx * (W / 2 - 0.35), 0.55, L / 2 - 0.1, g).rotation.x = 0.7;
+    part(G.box, track, 0.72, 0.5, L * 0.12, sx * (W / 2 - 0.35), 0.55, -L / 2 + 0.1, g).rotation.x = -0.7;
+    for (let k = 0; k < 6; k++) {
+      const w = part(G.wheel, wheelM, 0.74, 0.72, 0.72, sx * (W / 2 + 0.02), 0.45, -L / 2 + 0.9 + k * ((L - 1.8) / 5), g);
+      wheels.push(w);
+    }
+    part(G.box, body, 0.9, 0.12, L * 0.98, sx * (W / 2 - 0.35), 1.1, 0, g); // fender
+  }
+  // Hull with a sloped front plate
+  part(G.box, body, W - 1.3, 0.9, L * 0.92, 0, 1.0, -0.1, g);
+  const glacis = part(G.box, body, W - 1.3, 0.12, 1.5, 0, 1.25, L / 2 - 0.75, g);
+  glacis.rotation.x = 0.45;
+  part(G.box, body, W - 0.2, 0.35, L * 0.75, 0, 1.55, -0.3, g); // deck
+  // Turret, cannon and hatch (turret is a group so it can swing)
+  const turret = new THREE.Group();
+  turret.position.set(0, 1.72, -0.5);
+  g.add(turret);
+  part(G.box, body, 2.3, 0.75, 2.9, 0, 0.38, 0, turret);
+  part(G.box, body, 1.7, 0.2, 2.2, 0, 0.85, -0.2, turret);
+  part(G.cyl, dark, 0.75, 0.25, 0.75, -0.5, 0.95, -0.5, turret); // hatch
+  const barrel = new THREE.Group();
+  barrel.position.set(0, 0.42, 1.45);
+  turret.add(barrel);
+  const tube = part(G.cyl, dark, 0.26, 3.6, 0.26, 0, 0, 1.8, barrel);
+  tube.rotation.x = Math.PI / 2;
+  const muzzle = part(G.cyl, dark, 0.36, 0.5, 0.36, 0, 0, 3.6, barrel);
+  muzzle.rotation.x = Math.PI / 2;
+  const flash = part(G.sphere, mat(0xfff0a0, { emissive: 0xffc040 }), 1.2, 1.2, 1.6, 0, 0, 4.4, barrel, false);
+  flash.visible = false;
+  // School colors: gold stripe and a navy star on each side
+  part(G.box, gold, 2.32, 0.12, 2.92, 0, 0.55, 0, turret);
+  for (const sx of [-1, 1]) part(G.box, navy, 0.04, 0.5, 0.5, sx * 1.17, 0.35, 0.3, turret).rotation.x = Math.PI / 4;
+  // Little cross-shaped antenna flag
+  part(G.box, dark, 0.04, 1.8, 0.04, 0.8, 1.6, -1.1, turret);
+  part(G.box, gold, 0.03, 0.4, 0.6, 0.8, 2.3, -0.82, turret);
+  part(G.box, light, 0.3, 0.15, 0.05, -0.7, 1.2, L / 2 - 0.05, g);
+  part(G.box, light, 0.3, 0.15, 0.05, 0.7, 1.2, L / 2 - 0.05, g);
+  g.userData.wheels = wheels;
+  g.userData.wheelR = 0.36;
+  g.userData.turret = turret;
+  g.userData.barrel = barrel;
+  g.userData.flash = flash;
+  g.userData.noSteer = true;
+  return g;
+}
+
+function makeHeli(g, body, dark, glass, light, red) {
+  const white = mat(0xf2f2ee), gold = mat(0xc9a227);
+  // Cabin, nose and engine housing
+  part(G.sphere, body, 2.4, 2.2, 4.4, 0, 1.85, 0.4, g);
+  part(G.box, body, 2.0, 1.3, 2.6, 0, 1.95, -0.6, g);
+  part(G.sphere, glass, 2.1, 1.6, 2.4, 0, 2.15, 1.55, g);
+  part(G.box, white, 1.5, 0.7, 2.4, 0, 3.05, -0.4, g);
+  part(G.box, gold, 2.42, 0.2, 3.6, 0, 1.6, 0.2, g); // gold stripe
+  // Tail boom, fins and tail rotor
+  const boom = part(G.cyl, body, 0.5, 5.0, 0.5, 0, 2.35, -3.6, g);
+  boom.rotation.x = Math.PI / 2 - 0.06;
+  part(G.box, body, 0.12, 1.5, 0.9, 0, 2.9, -6.0, g);
+  part(G.box, body, 1.6, 0.08, 0.6, 0, 2.4, -5.6, g);
+  const tail = new THREE.Group();
+  tail.position.set(0.22, 2.95, -6.1);
+  g.add(tail);
+  for (const a of [0, Math.PI / 2]) { const b = part(G.box, dark, 0.04, 1.4, 0.16, 0, 0, 0, tail); b.rotation.x = a; }
+  // Skids
+  for (const sx of [-1, 1]) {
+    part(G.box, dark, 0.12, 0.12, 3.8, sx * 1.1, 0.1, 0.4, g);
+    for (const z of [-0.6, 1.4]) part(G.box, dark, 0.08, 0.75, 0.08, sx * 0.95, 0.45, z, g).rotation.z = sx * 0.3;
+  }
+  // Main rotor
+  const rotor = new THREE.Group();
+  rotor.position.set(0, 3.55, 0.1);
+  g.add(rotor);
+  part(G.cyl, dark, 0.3, 0.45, 0.3, 0, -0.1, 0, rotor);
+  for (let k = 0; k < 4; k++) {
+    const blade = part(G.box, dark, 0.32, 0.05, 5.6, 0, 0.1, 2.85, rotor);
+    blade.position.set(Math.sin((k * Math.PI) / 2) * 2.85, 0.1, Math.cos((k * Math.PI) / 2) * 2.85);
+    blade.rotation.y = (k * Math.PI) / 2;
+  }
+  part(G.box, light, 0.25, 0.12, 0.05, 0, 1.0, 2.55, g);
+  part(G.box, red, 0.12, 0.12, 0.12, 0, 3.4, -6.4, g, false);
+  g.userData.wheels = [];
+  g.userData.wheelR = 1;
+  g.userData.rotor = rotor;
+  g.userData.tailRotor = tail;
   return g;
 }
 

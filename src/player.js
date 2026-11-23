@@ -43,7 +43,7 @@ export class Player {
       const v = this.vehicle;
       this.x = v.x; this.z = v.z; this.heading = v.heading;
       this.mesh.visible = false;
-      if (inp.wasPressed('throw')) this.horn();
+      if (inp.wasPressed('throw') && !v.spec.air) this.horn(); // in the chopper Space climbs
       return;
     }
     this.mesh.visible = true;
@@ -113,6 +113,7 @@ export class Player {
     v.hornCd = 4;
     g.audio.horn();
     g.hornWave(v.x, v.z);
+    if (v.spec.tracks) { v.fireT = 0.4; g.shake(0.35); g.toast('💥 <b>Hallelujah Shell!</b> (blanks, praise God)'); }
   }
 
   hurt(amount, msg) {
