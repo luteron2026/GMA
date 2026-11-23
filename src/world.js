@@ -8,6 +8,7 @@ import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
 import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 import { buildSolarCarports } from './solar.js';
+import { planCourts, buildCourts } from './sports.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -53,10 +54,12 @@ export class World {
     setTerrainStride(lowSpec ? 2 : 1);
     this.site = planSite(this); // fountains, pool, courtyards from the Street View notes
     this.street = planStreetscape(this); // signs, poles, fences, gates from the Street View notes
+    this.courts = planCourts(); // pickleball and sand volleyball at West Campus
     // Concrete walks between entrances, drives and lots; trees and shrubs keep off them
     const walks = planWalkways(this, (b) => this.doorEdge(b));
     this.walkways = walks.walks;
     this.plazas = walks.pads;
+    this.planTrophy();
     this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
     this.planVehicleSpots();
     this.build();
@@ -76,9 +79,11 @@ export class World {
     this.buildBoundary();
     this.buildTrees();
     this.buildStructures();
-    const solar = new BoxBatch();
-    buildSolarCarports(this, solar);
-    solar.flush(this.scene, !this.lowSpec);
+    const extra = new BoxBatch();
+    buildSolarCarports(this, extra);
+    buildCourts(this, extra);
+    this.buildTrophy(extra);
+    extra.flush(this.scene, !this.lowSpec);
     this.buildLaneHints();
   }
 
@@ -429,6 +434,87 @@ export class World {
     }
   }
 
+  // Trophy Coffee: the coffee shop at the south end of the MacArthur Center, by the lot
+  // along Placerita Canyon Rd. Storefront on the south wall near its east corner, a patio
+  // in front (campus space).
+  planTrophy() {
+    const b = this.buildings.find((q) => q.id === 'chapel');
+    if (!b) return;
+    const e = wallEdge(b, { dir: [0, -1], minLen: 12 });
+    const sgn = e.tx >= 0 ? 1 : -1; // along the wall toward its east end
+    const tx = e.tx * sgn, ty = e.ty * sgn, nx = e.nx, ny = e.ny;
+    const v = e.len / 2 - 7;
+    const x = e.mx + tx * v, y = e.my + ty * v;
+    const deep = 6, wide = 12;
+    const P = (a, o) => [x + tx * a + nx * o, y + ty * a + ny * o]; // a along the wall, o out from it
+    const patio = [P(-wide / 2, 0.2), P(wide / 2, 0.2), P(wide / 2, deep), P(-wide / 2, deep)];
+    this.plazas.push(patio);
+    this.trophy = { x, y, tx, ty, nx, ny, P, patio };
+    this.places.trophy = [P(0, 4)[0], -P(0, 4)[1]];
+  }
+
+  buildTrophy(boxes) {
+    const t = this.trophy;
+    if (!t) return;
+    const { P, tx, ty, nx, ny } = t;
+    const wallA = Math.atan2(ty, tx), face = Math.atan2(nx, -ny);
+    const g = heightAtCampus(...P(0, 1));
+    const shadows = !this.lowSpec;
+    // Glass storefront with a black frame, and a door in the middle
+    const [sx, sy] = P(0, 0.1);
+    boxes.add(0x22303c, sx, g + 1.45, -sy, 7.2, 2.7, 0.12, wallA);
+    for (const a of [-3.6, -1.8, 0, 1.8, 3.6]) { const [fx, fy] = P(a, 0.16); boxes.add(0x151515, fx, g + 1.45, -fy, 0.12, 2.75, 0.08, wallA); }
+    { const [fx, fy] = P(0, 0.16); boxes.add(0x151515, fx, g + 2.82, -fy, 7.4, 0.12, 0.08, wallA); }
+    { const [dx, dy] = P(0, 0.2); boxes.add(0x2b1d14, dx, g + 1.15, -dy, 1.1, 2.3, 0.08, wallA); boxes.add(0xc9a227, dx + tx * 0.4, g + 1.1, -(dy + ty * 0.4), 0.05, 0.4, 0.12, wallA); }
+    // Black awning with a gold edge
+    { const [ax, ay] = P(0, 0.9); boxes.add(0x1c1c1c, ax, g + 3.15, -ay, 8, 0.12, 1.8, wallA, 0, -0.2); const [ex, ey] = P(0, 1.78); boxes.add(0xc9a227, ex, g + 2.98, -ey, 8, 0.22, 0.06, wallA); }
+    // Sign over the awning
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 220;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#141414'; ctx.fillRect(0, 0, 1024, 220);
+    ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 8; ctx.strokeRect(8, 8, 1008, 204);
+    // A little trophy cup
+    ctx.fillStyle = '#d9b23a';
+    ctx.beginPath(); ctx.moveTo(70, 50); ctx.lineTo(170, 50); ctx.quadraticCurveTo(165, 135, 120, 140); ctx.quadraticCurveTo(75, 135, 70, 50); ctx.fill();
+    ctx.fillRect(112, 138, 16, 30); ctx.fillRect(88, 166, 64, 14);
+    ctx.lineWidth = 9; ctx.strokeStyle = '#d9b23a';
+    ctx.beginPath(); ctx.arc(70, 80, 22, Math.PI * 0.5, Math.PI * 1.5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(170, 80, 22, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
+    ctx.fillStyle = '#f2e6c8'; ctx.font = 'bold 108px Georgia, "Times New Roman", serif'; ctx.textBaseline = 'middle';
+    ctx.fillText('TROPHY COFFEE', 215, 118, 780);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.07), new THREE.MeshLambertMaterial({ map: tex, emissive: 0x111111 }));
+    const [gx, gy] = P(0, 0.14);
+    sign.position.set(gx, g + 3.9, -gy); sign.rotation.y = face;
+    this.scene.add(sign);
+    // Patio: round tables with chairs and black-and-gold umbrellas
+    const top = mat(0x2b2b2b);
+    for (const [a, o, color] of [[-4, 3, 0x1c1c1c], [0, 4.2, 0xc9a227], [4, 3, 0x1c1c1c]]) {
+      const [x, y] = P(a, o), gt = heightAtCampus(x, y);
+      const tbl = new THREE.Mesh(GEOM.cyl, top); tbl.scale.set(1.0, 0.06, 1.0); tbl.position.set(x, gt + 0.75, -y); this.scene.add(tbl);
+      boxes.add(0x2b2b2b, x, gt + 0.37, -y, 0.08, 0.75, 0.08, 0);
+      for (const k of [0, 1, 2]) {
+        const an = (k / 3) * Math.PI * 2 + a;
+        const cx = x + Math.cos(an) * 0.85, cy = y + Math.sin(an) * 0.85;
+        boxes.add(0x3a3a3a, cx, gt + 0.45, -cy, 0.42, 0.05, 0.42, an);
+        boxes.add(0x3a3a3a, cx + Math.cos(an) * 0.2, gt + 0.7, -(cy + Math.sin(an) * 0.2), 0.05, 0.5, 0.42, an);
+      }
+      boxes.add(0x6b6b6b, x, gt + 1.3, -y, 0.05, 1.1, 0.05, 0);
+      const um = new THREE.Mesh(GEOM.cone8, mat(color)); um.scale.set(2.4, 0.5, 2.4); um.position.set(x, gt + 2.05, -y); um.castShadow = shadows;
+      this.scene.add(um);
+      this.colliders.addCircle(x, -y, 0.55, 'table', gt + 2.3);
+    }
+    // Chalkboard A-frame menu by the door
+    { const [mx, my] = P(2.2, 1.3), gm = heightAtCampus(mx, my); boxes.add(0x1f2a24, mx, gm + 0.5, -my, 0.6, 0.95, 0.06, wallA, 0, 0.18); boxes.add(0x6b4f33, mx, gm + 0.5, -my, 0.66, 1.0, 0.03, wallA, 0, 0.18); }
+    const lbl = makeLabel('Trophy Coffee', 'Coffee · Pastries', { width: 10 });
+    const [lx, ly] = P(0, 3);
+    lbl.position.set(lx, g + 6, -ly);
+    this.scene.add(lbl);
+    this.labels.push(lbl);
+  }
+
   // Where the tank and the helicopter park (world [x, z, heading])
   planVehicleSpots() {
     const spiral = (cx, cy, maxR, ok) => {
@@ -473,6 +559,13 @@ export class World {
       Math.abs(heightAtCampus(x + 4, y) - heightAtCampus(x - 4, y)) < 0.8 && Math.abs(heightAtCampus(x, y + 4) - heightAtCampus(x, y - 4)) < 0.8);
     // Facing the nearest street, like it's guarding the place
     this.places.tankSpot = [tank[0], -tank[1], Math.PI * 0.85];
+    // Forklift: parked beside the Trophy Coffee patio, forks toward the wall
+    if (this.trophy) {
+      const t = this.trophy;
+      const [fx, fy] = t.P(-9.5, 3.5);
+      const spot = spiral(fx, fy, 20, (x, y) => !nearBuilding(x, y, 2) && !this.pavedAt(x, y, 0.5) && !CAMPUS.roads.some((r) => r.kind !== 'trail' && distToPolyline(x, y, r.pts) < r.width / 2 + 2));
+      this.places.forkliftSpot = [spot[0], -spot[1], Math.atan2(-t.nx, t.ny)];
+    }
   }
 
   // The wall with the real entrance: the one by the building's mission spot, or else the
@@ -735,7 +828,9 @@ export class World {
     const { blds, fields, pools } = this._plantCheck;
     if (this.pavedAt(x, y, m)) return false;
     // Room for the parked tank and the helicopter's rotor
-    for (const [px, pz, , r] of [[...this.places.tankSpot, 6], [...this.places.helipad, 8]]) if (Math.hypot(x - px, y + pz) < r) return false;
+    const spots = [[...this.places.tankSpot, 6], [...this.places.helipad, 8]];
+    if (this.places.forkliftSpot) spots.push([...this.places.forkliftSpot, 3.5]);
+    for (const [px, pz, , r] of spots) if (Math.hypot(x - px, y + pz) < r) return false;
     for (const b of blds) {
       if (x < b.x0 - 1 || x > b.x1 + 1 || y < b.y0 - 1 || y > b.y1 + 1) continue;
       if (pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < 1) return false;

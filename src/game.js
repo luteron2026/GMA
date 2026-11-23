@@ -10,8 +10,9 @@ import { Imp, Projectile } from './enemies.js';
 import { Missions } from './missions.js';
 import { loadSave, writeSave, clearSave, hasProgress } from './save.js';
 import { VEHICLE_TYPES } from './models.js';
-import { clamp, lerp, mulberry32 } from './physics.js';
+import { clamp, lerp, mulberry32, pointInPoly } from './physics.js';
 import { groundY } from './terrain.js';
+import { Pickleball } from './sports.js';
 
 const BORROW_LINES = [
   'You shared Romans 12:13 ("practice hospitality"). The driver insists you borrow the car.',
@@ -149,6 +150,7 @@ export class Game {
     this.spawnVehicle('tank', tk[0], tk[1], tk[2]);
     const hp = w.places.helipad;
     this.spawnVehicle('heli', hp[0], hp[1], hp[2]);
+    if (w.places.forkliftSpot) { const f = w.places.forkliftSpot; this.spawnVehicle('forklift', f[0], f[1], f[2]); }
     // Traffic on the real streets, carts on the campus service roads
     const carLanes = w.lanes.filter((l) => l.kind === 'car' && l.length > 150);
     for (const lane of carLanes) {
@@ -167,7 +169,7 @@ export class Game {
     }
     // Pedestrians around campus hot spots
     const spots = ['grill', 'library', 'reece', 'chapelDoor', 'waldock', 'smith', 'hotchkiss', 'dixon', 'slight', 'sweazy', 'quad', 'stadium',
-      'gym', 'king', 'biblical', 'music', 'education', 'herwaldtLawn', 'northLawn', 'placeritos', 'westLot', 'eastLot'];
+      'gym', 'king', 'biblical', 'music', 'education', 'herwaldtLawn', 'northLawn', 'placeritos', 'westLot', 'eastLot', 'trophy'];
     const count = this.lowSpec ? 30 : 50;
     for (let i = 0; i < count; i++) {
       const spot = w.places[spots[i % spots.length]];
@@ -188,6 +190,7 @@ export class Game {
   // its roads with drivers, the tank, chopper and forklift on their pads
   resetVehicles() {
     if (this.state !== 'play' && this.state !== 'pause') return;
+    if (this.pickle) this.endPickleball();
     if (this.player.vehicle) {
       const v = this.player.vehicle;
       const up = v.spec.air && v.y - groundY(v.x, v.z) > 0.3;
@@ -203,7 +206,7 @@ export class Game {
     // Vehicles brought back from a save (not part of the starting lineup) go away
     for (const v of this.vehicles.filter((q) => q.fromSave)) { v.dispose(); this.vehicles.splice(this.vehicles.indexOf(v), 1); }
     for (const v of this.vehicles) {
-      v.speed = 0; v.steer = 0; v.climb = 0; v.alt = 0; v.y = undefined; v.fireT = 0;
+      v.speed = 0; v.steer = 0; v.climb = 0; v.alt = 0; v.y = undefined; v.fireT = 0; v.forksUp = false;
       if (v.homeLane) v.setAI(v.homeLane.lane, v.homeLane.idx);
       else { v.x = v.home.x; v.z = v.home.z; v.heading = v.home.heading; }
       v.sync(0);
@@ -340,7 +343,7 @@ export class Game {
 
   pause(on) {
     if (this.state === 'title' || this.state === 'ending') return;
-    this.state = on ? 'pause' : 'play';
+    this.state = on ? 'pause' : (this.pickle ? 'pickle' : 'play');
     document.getElementById('pause').classList.toggle('show', on);
     document.getElementById('abandon').style.display = this.missions.active ? '' : 'none';
     this.clock.getDelta();
@@ -449,6 +452,18 @@ export class Game {
     }
     const mi = this.missions.interaction();
     if (mi) return mi;
+    // Trophy Coffee
+    const tc = this.world.places.trophy;
+    if (!p.vehicle && tc && Math.hypot(tc[0] - p.x, tc[1] - p.z) < 4) {
+      return { text: '☕ Order a cold brew at <b>Trophy Coffee</b> (5 Chapel Credits)', fn: () => this.buyCoffee() };
+    }
+    // Pickleball: walk onto the courts at West Campus
+    const cb = this.world.courts && this.world.courts.block;
+    if (!p.vehicle && cb && !this.missions.active && pointInPoly(p.x, -p.z, cb.outline)) {
+      let best = null, bd = Infinity;
+      for (const c of this.world.courts.pickle) { const d = Math.hypot(c.cx - p.x, c.cy + p.z); if (d < bd) { bd = d; best = c; } }
+      if (best) return { text: '🏓 Play <b>pickleball</b>', fn: () => this.startPickleball(best) };
+    }
     // Offer rides from a vehicle
     if (p.vehicle && !this.ride && Math.abs(p.vehicle.speed) < 3) {
       const npc = this.nearestNPC(7, (n) => n.need && n.need.type === 'ride');
@@ -500,7 +515,36 @@ export class Game {
     v.speed = 0;
     p.enter(v);
     if (v.spec.air) this.toast(this.input.isTouch ? '🚁 Hold <b>📖</b> to climb, <b>⚡</b> to descend. Stick flies and turns.' : '🚁 Hold <b>Space</b> to climb, <b>Shift</b> to descend. <b>W/S</b> fly, <b>A/D</b> turn.');
+    else if (v.spec.forklift) this.toast(this.input.isTouch ? '🏗️ The back wheels steer. <b>📖</b> raises and lowers the forks.' : '🏗️ The back wheels steer. <b>Space</b> raises and lowers the forks.');
     else if (v.spec.tracks) this.toast(this.input.isTouch ? '🪖 Tracks turn in place. <b>📖</b> fires a Hallelujah Shell.' : '🪖 Tracks turn in place. <b>Space</b> fires a Hallelujah Shell.');
+  }
+
+  buyCoffee() {
+    if (this.save.credits < 5) { this.toast('☕ The barista smiles: "On the house. Pay it forward."'); this.player.joy = 100; return; }
+    this.addCredits(-5);
+    this.player.joy = 100;
+    const lines = ['☕ Cold brew acquired. Joy fully restored. Theology now 20% easier to read.', '☕ An oat milk latte with a little cross in the foam. Joy restored.', '☕ "Name for the order?" You said your name. They spelled it wrong. Joy restored anyway.'];
+    this.toast(lines[Math.floor(Math.random() * lines.length)]);
+    this.audio.pickup();
+  }
+
+  startPickleball(court) {
+    this.pickle = new Pickleball(this, court);
+    this.state = 'pickle';
+    this.hud.setPrompt(null);
+    this.toast(`🏓 ${this.pickle.op.name} is up for a game. First to 7, win by 2.`);
+  }
+
+  endPickleball() {
+    const pk = this.pickle;
+    if (!pk) return;
+    pk.dispose();
+    this.pickle = null;
+    // Back on your feet beside the court you played on
+    const [x, , z] = pk.W(pk.me.u, clamp(pk.me.v, -2, 2));
+    const r = this.world.colliders.resolve(x, z, 0.6);
+    this.player.teleport(r.x, r.z, Math.atan2(pk.c, -pk.s));
+    this.state = 'play';
   }
 
   exitVehicle() {
@@ -571,9 +615,10 @@ export class Game {
       this.toast(m ? '🔇 Sound off' : '🔊 Sound on');
       document.getElementById('btn-mute').textContent = m ? '🔇' : '🔊';
     }
-    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause')) this.pause(this.state === 'play');
+    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause' || this.state === 'pickle')) this.pause(this.state !== 'pause');
 
     if (this.state === 'play') this.update(dt);
+    else if (this.state === 'pickle') { this.pickle.update(dt); this.updateWorldOnly(dt); this.fadeLabels(); }
     else if (this.state === 'title') this.titleCam(dt);
     else if (this.state === 'faint' || this.state === 'ending') { this.updateWorldOnly(dt); this.updateCamera(dt); }
 
@@ -711,7 +756,7 @@ export class Game {
   // Building name tags hide when the camera is right next to one (e.g. on a rooftop)
   fadeLabels() {
     const c = this.camera.position;
-    for (const l of this.world.labels) l.visible = c.distanceToSquared(l.position) > 16 * 16;
+    for (const l of this.world.labels) l.visible = !this.pickle && c.distanceToSquared(l.position) > 16 * 16;
   }
 
   updateSun() {

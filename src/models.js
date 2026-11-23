@@ -133,6 +133,11 @@ export const VEHICLE_TYPES = {
     label: 'Mustang Tank (ROTC surplus)', maxSpeed: 12, accel: 4.5, brake: 12, turn: 1.25, width: 3.4, length: 7.2,
     colors: [0x5b6340], tracks: true, heavy: true, unique: true,
   },
+  // Steers with the back wheels; Space raises and lowers the forks
+  forklift: {
+    label: 'Trophy Coffee Forklift', maxSpeed: 6.5, accel: 3.5, brake: 10, turn: 2.4, width: 1.3, length: 2.6,
+    colors: [0xf2b705], forklift: true, unique: true,
+  },
   // Flies: Space climbs, Shift descends, W/S forward/back, A/D turn
   heli: {
     label: 'Prayer Chopper', maxSpeed: 32, accel: 9, brake: 10, turn: 1.4, width: 2.6, length: 8.5,
@@ -155,6 +160,7 @@ export function makeVehicle(type, color) {
 
   if (type === 'tank') return makeTank(g, body, dark, light);
   if (type === 'heli') return makeHeli(g, body, dark, glass, light, red);
+  if (type === 'forklift') return makeForklift(g, body, dark, tire, light);
 
   if (type === 'cart' || type === 'deanCart') {
     part(G.box, body, W, 0.35, L, 0, 0.45, 0, g);
@@ -251,6 +257,42 @@ function makeTank(g, body, dark, light) {
   g.userData.barrel = barrel;
   g.userData.flash = flash;
   g.userData.noSteer = true;
+  return g;
+}
+
+function makeForklift(g, body, dark, tire, light) {
+  const t = VEHICLE_TYPES.forklift, W = t.width, L = t.length;
+  const steel = mat(0x3d4044), wood = mat(0x9a7448), sack = mat(0x7a5a38), black = mat(0x1c1c1c);
+  // Chassis, counterweight, seat and the overhead guard
+  part(G.box, body, W, 0.75, L * 0.72, 0, 0.7, -0.25, g);
+  part(G.box, body, W * 0.98, 0.65, 0.55, 0, 0.95, -L / 2 + 0.25, g);
+  part(G.box, black, 0.5, 0.12, 0.5, 0, 1.15, -0.45, g);
+  part(G.box, black, 0.5, 0.55, 0.1, 0, 1.45, -0.72, g);
+  for (const sx of [-1, 1]) for (const z of [-0.85, 0.35]) part(G.box, steel, 0.07, 1.25, 0.07, sx * (W / 2 - 0.1), 1.65, z, g);
+  part(G.box, steel, W * 0.9, 0.06, 1.35, 0, 2.28, -0.25, g);
+  for (let k = -2; k <= 2; k++) part(G.box, steel, 0.04, 0.05, 1.3, k * 0.22, 2.32, -0.25, g);
+  part(G.box, black, 0.35, 0.08, 0.35, 0.05, 1.6, 0.25, g).rotation.x = -0.6; // steering wheel
+  // Mast with a carriage that slides up: backrest, two forks and a pallet of coffee sacks
+  for (const sx of [-0.38, 0.38]) part(G.box, steel, 0.12, 2.3, 0.14, sx, 1.25, L / 2 - 0.05, g);
+  part(G.box, steel, 0.9, 0.1, 0.14, 0, 2.35, L / 2 - 0.05, g);
+  const carriage = new THREE.Group();
+  carriage.position.set(0, 0, L / 2 + 0.05);
+  g.add(carriage);
+  part(G.box, steel, 0.95, 0.5, 0.06, 0, 0.45, 0, carriage);
+  for (const sx of [-0.3, 0.3]) part(G.box, steel, 0.12, 0.05, 1.1, sx, 0.16, 0.55, carriage);
+  part(G.box, wood, 1.0, 0.13, 1.0, 0, 0.26, 0.58, carriage);
+  for (const [x, z, y] of [[-0.24, 0.35, 0.45], [0.24, 0.35, 0.45], [-0.24, 0.8, 0.45], [0.24, 0.8, 0.45], [0, 0.58, 0.7]]) part(G.box, sack, 0.45, 0.25, 0.4, x, y, z, carriage);
+  part(G.box, light, 0.18, 0.12, 0.05, -0.45, 1.0, L / 2 - 0.35, g);
+  part(G.box, mat(0xff8c1a, { emissive: 0x552200 }), 0.14, 0.1, 0.14, 0, 2.38, -0.85, g); // beacon
+  // Big front wheels, small rear (steering) wheels
+  const wheels = [];
+  for (const sx of [-1, 1]) {
+    for (const [z, r] of [[-L / 2 + 0.45, 0.26], [L / 2 - 0.5, 0.36]]) wheels.push(part(G.wheel, tire, r * 2, r * 2, r * 2, sx * (W / 2 - 0.05), r, z, g));
+  }
+  g.userData.wheels = wheels;
+  g.userData.wheelR = 0.3;
+  g.userData.rearSteer = true;
+  g.userData.carriage = carriage;
   return g;
 }
 

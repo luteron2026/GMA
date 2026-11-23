@@ -308,11 +308,20 @@ export class Vehicle {
     for (let i = 0; i < ws.length; i++) {
       ws[i].rotation.x = this.wheelSpin;
       // front wheels are the ones at +z (index 1 and 3)
-      ws[i].rotation.y = i % 2 === 1 && !this.mesh.userData.noSteer ? -this.steer * 0.45 : 0;
+      const ud0 = this.mesh.userData;
+      if (ud0.rearSteer) ws[i].rotation.y = i % 2 === 0 ? this.steer * 0.7 : 0; // forklift: back wheels steer
+      else ws[i].rotation.y = i % 2 === 1 && !ud0.noSteer ? -this.steer * 0.45 : 0;
     }
     // Slight body lean in turns
     this.mesh.rotation.z = tilt - (this.spec.tracks ? 0 : this.steer * clamp(this.speed / 25, -1, 1) * 0.05);
     const ud = this.mesh.userData;
+    if (ud.carriage) {
+      // Forks glide toward their set height
+      this.forkH = this.forkH || 0;
+      const want = this.forksUp ? 1.9 : 0;
+      this.forkH += clamp(want - this.forkH, -0.9 * dt, 0.9 * dt);
+      ud.carriage.position.y = this.forkH;
+    }
     if (ud.turret) {
       // The barrel recoils after a shot and the flash fades
       this.fireT = Math.max(0, (this.fireT || 0) - dt);
