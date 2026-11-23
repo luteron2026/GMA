@@ -62,6 +62,8 @@ function boot() {
     $('btn-mute').textContent = m ? '🔇' : '🔊';
   });
   $('abandon').addEventListener('click', () => { game.missions.abandon(); game.pause(false); });
+  $('reset-vehicles').addEventListener('click', () => { game.resetVehicles(); game.pause(false); });
+  $('btn-vreset').addEventListener('click', () => game.resetVehicles());
   $('reset').addEventListener('click', () => {
     if (confirm('Reset all missions and Chapel Credits?')) { game.resetProgress(); game.pause(false); }
   });

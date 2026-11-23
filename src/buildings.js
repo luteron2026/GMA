@@ -417,7 +417,7 @@ export function addDetails(world, b, look, door, geo, boxes) {
     spire.rotation.y = wallA + Math.PI / 4; spire.castShadow = shadows;
     scene.add(spire);
     const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => W(x + (nx * u + tx * v) * s / 2, y + (ny * u + ty * v) * s / 2));
-    colliders.addPoly(c, 'tower');
+    colliders.addPoly(c, 'tower', H + 7.5);
   }
 
   // Exterior stair running up the entrance wall to a second-floor door

@@ -1,4 +1,6 @@
-// Lightweight 2D collision on the ground plane (x, z).
+// Lightweight 2D collision on the ground plane (x, z). Each collider also has a top height,
+// so things flying above it (the helicopter, the camera) aren't pushed around by it.
+import { groundY } from './terrain.js';
 
 const CELL = 24;
 
@@ -13,6 +15,8 @@ export class Colliders {
   }
 
   insert(item) {
+    // Without a stated height, assume something about as tall as a fence or a sign
+    if (item.top === undefined) item.top = groundY((item.minX + item.maxX) / 2, (item.minZ + item.maxZ) / 2) + 4;
     this.items.push(item);
     const x0 = Math.floor(item.minX / CELL), x1 = Math.floor(item.maxX / CELL);
     const z0 = Math.floor(item.minZ / CELL), z1 = Math.floor(item.maxZ / CELL);
@@ -27,17 +31,17 @@ export class Colliders {
   }
 
   // pts: array of [x, z] in world space
-  addPoly(pts, tag) {
+  addPoly(pts, tag, top) {
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (const [x, z] of pts) {
       minX = Math.min(minX, x); maxX = Math.max(maxX, x);
       minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
     }
-    this.insert({ type: 'poly', pts, minX, maxX, minZ, maxZ, tag });
+    this.insert({ type: 'poly', pts, minX, maxX, minZ, maxZ, tag, top });
   }
 
-  addCircle(x, z, r, tag) {
-    this.insert({ type: 'circle', x, z, r, minX: x - r, maxX: x + r, minZ: z - r, maxZ: z + r, tag });
+  addCircle(x, z, r, tag, top) {
+    this.insert({ type: 'circle', x, z, r, minX: x - r, maxX: x + r, minZ: z - r, maxZ: z + r, tag, top });
   }
 
   nearby(x, z, r, out) {
@@ -60,12 +64,14 @@ export class Colliders {
     return out;
   }
 
-  // Push a circle out of all colliders. Returns {x, z, hit, nx, nz}.
-  resolve(x, z, r) {
+  // Push a circle out of all colliders. Returns {x, z, hit, nx, nz}. With `above`, colliders
+  // whose top is lower than that height are ignored.
+  resolve(x, z, r, above = -Infinity) {
     const res = { x, z, hit: false, nx: 0, nz: 0 };
     const list = this.nearby(x, z, r + 1, this._tmp || (this._tmp = []));
     for (let pass = 0; pass < 2; pass++) {
       for (const it of list) {
+        if (it.top < above) continue;
         if (it.type === 'circle') {
           const dx = res.x - it.x, dz = res.z - it.z;
           const d = Math.hypot(dx, dz), min = r + it.r;

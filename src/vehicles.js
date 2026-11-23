@@ -120,41 +120,70 @@ export class Vehicle {
   // Helicopter: Space (📖) climbs, Shift (⚡) descends, forward/back fly, left/right turn.
   // It needs to be off the ground to move, and lands wherever it's let down.
   flight(dt) {
-    const s = this.spec, inp = this.game.input;
+    const s = this.spec, inp = this.game.input, w = this.game.world;
     const flying = this.drivenByPlayer;
+    // Height is kept as an absolute value (this.y), so the chopper holds its altitude over
+    // hills and ravines instead of riding up and down with the ground under it
+    if (this.y === undefined) this.y = this.floorUnder();
     let fwd = 0, turn = 0, up = 0;
     if (flying) {
       fwd = inp.forward; turn = inp.turn;
       up = (inp.isDown('throw') ? 1 : 0) - (inp.isDown('sprint') ? 1 : 0);
-    } else if (this.alt > 0) up = -1; // nobody at the controls: settle down
+    } else if (this.alt > 0.02) up = -1; // nobody at the controls: settle down
     const target = this.alt > 1 ? fwd * (fwd < 0 ? s.maxSpeed * 0.35 : s.maxSpeed) : 0;
     this.speed += (target - this.speed) * Math.min(1, dt * (fwd ? 0.9 : 0.6));
     this.climb += (up * 7 - this.climb) * Math.min(1, dt * 3);
-    this.alt = clamp(this.alt + this.climb * dt, 0, 120);
-    if (this.alt <= 0) { this.climb = Math.max(0, this.climb); if (this.alt <= 0) this.speed *= Math.max(0, 1 - dt * 4); }
+    this.y = Math.min(this.y + this.climb * dt, w.groundY(this.x, this.z) + 140);
     this.steer += (turn - this.steer) * Math.min(1, dt * 4);
     if (this.alt > 0.5) this.heading -= this.steer * s.turn * dt;
     this.x += this.fx * this.speed * dt;
     this.z += this.fz * this.speed * dt;
     // Stay over the map
-    const w = this.game.world, b = w.bounds;
+    const b = w.bounds;
     this.x = clamp(this.x, b.minX + 6, b.maxX - 6);
     this.z = clamp(this.z, b.minZ + 6, b.maxZ - 6);
-    // Low down it bumps into things like any vehicle; up high it clears the rooftops
-    if (this.alt < 14) this.collideWorld();
-    const spinUp = flying ? 1 : (this.alt > 0 ? 0.6 : 0);
+    // Bump into whatever stands taller than the skids: walls, trees, poles. Anything below
+    // (a roof it's flying over, a fence) doesn't push it around
+    this.collideWorld(this.y + 0.4);
+    // Rest on the highest thing under the skids: the ground or a rooftop
+    const floor = this.floorUnder();
+    if (this.y <= floor) {
+      this.y = floor;
+      this.climb = Math.max(0, this.climb);
+    }
+    this.alt = this.y - floor;
+    if (this.alt < 0.05) this.speed *= Math.max(0, 1 - dt * 4);
+    const spinUp = flying ? 1 : (this.alt > 0.05 ? 0.6 : 0);
     this.rotorRate = (this.rotorRate || 0) + (spinUp * 28 - (this.rotorRate || 0)) * Math.min(1, dt * 0.8);
   }
+
+  // Skid contact points (front/back on both sides) in world space
+  skids() {
+    const sx = this.fz, sz = -this.fx; // local +x
+    const out = [];
+    for (const side of [-1.1, 1.1]) for (const along of [-0.9, 1.7]) out.push([this.x + sx * side + this.fx * along, this.z + sz * side + this.fz * along]);
+    return out;
+  }
+
+  floorUnder() {
+    const w = this.game.world;
+    let f = w.surfaceAt(this.x, this.z);
+    for (const [x, z] of this.skids()) f = Math.max(f, w.surfaceAt(x, z));
+    return f;
+  }
+
+  // Height of the bottom of the body (for telling apart things above and below each other)
+  get bodyY() { return this.mesh.position.y; }
 
   circles() {
     const o = this.circleOff;
     return [[this.x + this.fx * o, this.z + this.fz * o], [this.x - this.fx * o, this.z - this.fz * o]];
   }
 
-  collideWorld() {
+  collideWorld(above = -Infinity) {
     let hit = false, nx = 0, nz = 0;
     for (const [cx, cz] of this.circles()) {
-      const r = this.game.world.colliders.resolve(cx, cz, this.circleR);
+      const r = this.game.world.colliders.resolve(cx, cz, this.circleR, above);
       if (r.hit) {
         this.x += r.x - cx; this.z += r.z - cz;
         hit = true; nx = r.nx; nz = r.nz;
@@ -232,18 +261,24 @@ export class Vehicle {
 
   sync(dt = 0) {
     if (this.spec.air) {
-      // Body follows the ground when landed; in the air it noses down to fly forward and
-      // banks into turns
-      const L = this.spec.length * 0.3;
-      const hf = groundY(this.x + this.fx * L, this.z + this.fz * L), hb = groundY(this.x - this.fx * L, this.z - this.fz * L);
-      const g = Math.max(hf, hb);
-      const air = clamp(this.alt / 2, 0, 1);
-      this.mesh.position.set(this.x, (hf + hb) / 2 * (1 - air) + g * air + this.alt, this.z);
+      // Landed: sit level on the skids (ground or roof). Flying: nose down to go forward and
+      // bank into turns
+      if (this.y === undefined) this.y = this.floorUnder();
+      const w = this.game.world;
+      const air = clamp(this.alt / 1.5, 0, 1);
+      let pitch = 0, roll = 0;
+      if (air < 1) {
+        const [bl, fl, br, fr] = this.skids().map(([x, z]) => w.surfaceAt(x, z)); // order from skids()
+        pitch = -Math.atan2((fl + fr) / 2 - (bl + br) / 2, 2.6);
+        roll = Math.atan2((fr + br) / 2 - (fl + bl) / 2, 2.2);
+        // Don't tip over at a roof edge: only follow gentle slopes
+        if (Math.abs(pitch) > 0.25 || Math.abs(roll) > 0.25) pitch = roll = 0;
+      }
+      this.mesh.position.set(this.x, this.y, this.z);
       this.mesh.rotation.order = 'YXZ';
       this.mesh.rotation.y = this.heading;
-      const groundPitch = -Math.atan2(hf - hb, 2 * L);
-      this.mesh.rotation.x = groundPitch * (1 - air) + air * clamp(this.speed / this.spec.maxSpeed, -0.5, 1) * 0.22;
-      this.mesh.rotation.z = -this.steer * 0.25 * air;
+      this.mesh.rotation.x = pitch * (1 - air) + air * clamp(this.speed / this.spec.maxSpeed, -0.5, 1) * 0.22;
+      this.mesh.rotation.z = roll * (1 - air) - this.steer * 0.25 * air;
       this.rotorSpin += (this.rotorRate || 0) * dt;
       const ud = this.mesh.userData;
       ud.rotor.rotation.y = this.rotorSpin;
@@ -300,7 +335,7 @@ export function vehicleContacts(game) {
     for (let j = i + 1; j < vs.length; j++) {
       const b = vs[j];
       if (Math.abs(a.x - b.x) > 8 || Math.abs(a.z - b.z) > 8) continue;
-      if (a.airborne || b.airborne) continue;
+      if (a.airborne || b.airborne || Math.abs(a.bodyY - b.bodyY) > 2) continue; // one is up on a roof
       const cb = b.circles();
       for (const p of ca) for (const q of cb) {
         const dx = p[0] - q[0], dz = p[1] - q[1];

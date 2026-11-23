@@ -398,7 +398,14 @@ export class World {
         batch.add(hl && hl.shutters ? 'shutterWalls' : 'houseWalls', walls, hl ? hl.wall : b.color);
         batch.add('roofs', roof, hl ? hl.roof : roofColor);
       }
-      this.colliders.addPoly(b.wpts, b.id);
+      this.colliders.addPoly(b.wpts, b.id, top);
+      // Keep the roof triangles so the helicopter can land on it
+      {
+        const pos = roof.getAttribute('position').array;
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (let i = 0; i < pos.length; i += 3) { minX = Math.min(minX, pos[i]); maxX = Math.max(maxX, pos[i]); minZ = Math.min(minZ, pos[i + 2]); maxZ = Math.max(maxZ, pos[i + 2]); }
+        (this.roofSurfaces = this.roofSurfaces || []).push({ minX, maxX, minZ, maxZ, pos });
+      }
 
       const [cx, cy] = b.obb;
       b.center = [cx, -cy];
@@ -437,11 +444,19 @@ export class World {
     const nearBuilding = (x, y, m) => this.buildings.some((b) => pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < m);
     // Helipad: open pavement in the Reese Center lot, with room for the rotor
     const [ex, ey] = W(this.places.eastLot); // back to campus space
-    const pad = spiral(ex, ey, 60, (x, y) => {
-      if (Math.hypot(x - ex, y - ey) < 12) return false; // off the mission marker
-      const lot = CAMPUS.lots.find((l) => pointInPoly(x, y, l.poly));
-      return lot && distToPolyline(x, y, lot.poly, true) > 6 && !nearBuilding(x, y, 9);
-    });
+    // The open spot that covers the fewest parking stalls (so the lot keeps its rows)
+    let pad = [ex, ey], best = Infinity;
+    for (let gx = ex - 60; gx <= ex + 60; gx += 1.5) {
+      for (let gy = ey - 60; gy <= ey + 60; gy += 1.5) {
+        const d = Math.hypot(gx - ex, gy - ey);
+        if (d < 12 || d > 60) continue; // off the mission marker, but in this lot
+        const lot = CAMPUS.lots.find((l) => pointInPoly(gx, gy, l.poly));
+        if (!lot || distToPolyline(gx, gy, lot.poly, true) < 6 || nearBuilding(gx, gy, 9)) continue;
+        const stalls = this.data.stalls.filter((st) => Math.hypot(st[0] - gx, st[1] - gy) < 8.5).length;
+        const score = stalls * 10 + d * 0.1;
+        if (score < best) { best = score; pad = [gx, gy]; }
+      }
+    }
     // Line the chopper up with the nearest aisle
     let ang = 0, bd = Infinity;
     for (const r of CAMPUS.roads) {
@@ -553,7 +568,7 @@ export class World {
     const cy = groundY(hx, hz - 22);
     const v = new THREE.Mesh(GEOM.box, wood); v.scale.set(0.6, 10, 0.6); v.position.set(hx, cy + 4, hz - 22); v.castShadow = true; this.scene.add(v);
     const hb = new THREE.Mesh(GEOM.box, wood); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, cy + 6.8, hz - 22); this.scene.add(hb);
-    this.colliders.addCircle(hx, hz - 22, 1);
+    this.colliders.addCircle(hx, hz - 22, 1, 'cross', cy + 9);
     const [bx, bz] = this.places.hillBase;
     const gap = Math.atan2(bz - hz, bx - hx);
     const rock = mat(0x9a8b74);
@@ -755,7 +770,7 @@ export class World {
       else if (style === 'stonePine') { kind = 0; tree.cb = 0.68 * tree.h; tree.r = r * 1.15; tree.color = 0x3f5f33; }
       else if (style === 'crapeMyrtle') { kind = 0; tree.color = 0xd77aa8; }
       (kind === 1 ? palms : kind === 2 ? conifers : broad).push(tree);
-      if (this.inBounds(x, z, -2)) this.colliders.addCircle(x, z, Math.min(0.9, 0.3 + tree.h * 0.025 * (tree.trunkW || 1)), 'tree');
+      if (this.inBounds(x, z, -2)) this.colliders.addCircle(x, z, Math.min(0.9, 0.3 + tree.h * 0.025 * (tree.trunkW || 1)), 'tree', tree.g + tree.h);
     }
     // Scenery beyond the LiDAR area: oaks in the canyons around (no collision)
     const outside = [];
@@ -912,13 +927,13 @@ export class World {
           const [px, pz] = at(sx * len, sz * wid);
           const pg = groundY(px, pz);
           posts.push([m4.compose(v.set(px, (pg + gy + h) / 2, pz), q, sc.set(0.25, gy + h - pg, 0.25)).clone(), campus && !inLot ? CAMPUS_STYLE.trim : 0x6c6e70]);
-          this.colliders.addCircle(px, pz, 0.25);
+          this.colliders.addCircle(px, pz, 0.25, 'carport', gy + h);
         }
       } else {
         // A shed or outbuilding: stucco on campus, plain siding elsewhere, with a roof cap
         walls.push([m4.compose(v.set(x, gy + (h - 1) / 2, z), q, sc.set(len, h + 1, wid)).clone(), campus ? CAMPUS_STYLE.wall : 0xd8cdb8]);
         caps.push([m4.compose(v.set(x, gy + h + 0.1, z), q, sc.set(len + 0.4, 0.25, wid + 0.4)).clone(), campus ? CAMPUS_STYLE.roof : 0x7a6a5a]);
-        this.colliders.addPoly([at(-len / 2, -wid / 2), at(len / 2, -wid / 2), at(len / 2, wid / 2), at(-len / 2, wid / 2)], 'structure');
+        this.colliders.addPoly([at(-len / 2, -wid / 2), at(len / 2, -wid / 2), at(len / 2, wid / 2), at(-len / 2, wid / 2)], 'structure', gy + h + 0.3);
       }
     }
     const byColor = new Map();
@@ -1022,6 +1037,25 @@ export class World {
       return [x, z];
     }
     return near ? [...near] : [...this.places.spawn];
+  }
+
+  // Highest thing to stand or land on at a world point: the ground or a building's roof
+  surfaceAt(x, z) {
+    let h = groundY(x, z);
+    for (const r of this.roofSurfaces || []) {
+      if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
+      const p = r.pos;
+      for (let i = 0; i < p.length; i += 9) {
+        const ax = p[i], az = p[i + 2], bx = p[i + 3], bz = p[i + 5], cx = p[i + 6], cz = p[i + 8];
+        const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+        if (Math.abs(d) < 1e-9) continue;
+        const u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+        const v = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+        if (u < -1e-4 || v < -1e-4 || u + v > 1 + 1e-4) continue;
+        h = Math.max(h, u * p[i + 1] + v * p[i + 4] + (1 - u - v) * p[i + 7]);
+      }
+    }
+    return h;
   }
 
   // Height of a speed bump at a world point (cars bounce over them)

@@ -156,12 +156,14 @@ export class Game {
       for (let i = 0; i < n; i++) {
         const v = this.spawnVehicle(['sedan', 'truck', 'sedan', 'van'][Math.floor(rng() * 4)], 0, 0, 0);
         v.setAI(lane, Math.floor((i / n) * (lane.pts.length - 1)));
+        v.homeLane = { lane, idx: Math.floor((i / n) * (lane.pts.length - 1)) };
       }
     }
     const cartLanes = w.lanes.filter((l) => l.kind === 'cart').sort((a, b) => b.length - a.length);
     for (const lane of cartLanes.slice(0, this.lowSpec ? 3 : 6)) {
       const v = this.spawnVehicle('cart', 0, 0, 0);
       v.setAI(lane, 0);
+      v.homeLane = { lane, idx: 0 };
     }
     // Pedestrians around campus hot spots
     const spots = ['grill', 'library', 'reece', 'chapelDoor', 'waldock', 'smith', 'hotchkiss', 'dixon', 'slight', 'sweazy', 'quad', 'stadium',
@@ -177,8 +179,38 @@ export class Game {
 
   spawnVehicle(type, x, z, heading) {
     const v = new Vehicle(this, type, x, z, heading);
+    v.home = { x, z, heading }; // where the reset button puts it back
     this.vehicles.push(v);
     return v;
+  }
+
+  // Put every vehicle back where it started: parked ones in their spots, traffic back on
+  // its roads with drivers, the tank, chopper and forklift on their pads
+  resetVehicles() {
+    if (this.state !== 'play' && this.state !== 'pause') return;
+    if (this.player.vehicle) {
+      const v = this.player.vehicle;
+      const up = v.spec.air && v.y - groundY(v.x, v.z) > 0.3;
+      if (this.ride) this.endRide(false);
+      this.player.exit();
+      if (up) {
+        // Step out of a hovering or roof-parked chopper onto open ground below
+        let r = { x: this.player.x, z: this.player.z };
+        for (let i = 0; i < 4; i++) r = this.world.colliders.resolve(r.x, r.z, 0.7);
+        this.player.teleport(r.x, r.z, this.player.heading);
+      }
+    }
+    // Vehicles brought back from a save (not part of the starting lineup) go away
+    for (const v of this.vehicles.filter((q) => q.fromSave)) { v.dispose(); this.vehicles.splice(this.vehicles.indexOf(v), 1); }
+    for (const v of this.vehicles) {
+      v.speed = 0; v.steer = 0; v.climb = 0; v.alt = 0; v.y = undefined; v.fireT = 0;
+      if (v.homeLane) v.setAI(v.homeLane.lane, v.homeLane.idx);
+      else { v.x = v.home.x; v.z = v.home.z; v.heading = v.home.heading; }
+      v.sync(0);
+    }
+    // Drivers who handed over their cars were left standing around; they're back behind the wheel
+    for (const n of this.npcs.filter((q) => q.fromCar && !q.need)) this.removeNPC(n);
+    this.toast('🔄 All vehicles are back where they started.');
   }
 
   spawnMissionNPC(x, z) {
@@ -229,7 +261,8 @@ export class Game {
       // There's only one tank and one chopper: take the parked one along
       const one = VEHICLE_TYPES[s.vehicle.type].unique && this.vehicles.find((q) => q.type === s.vehicle.type);
       const v = one || this.spawnVehicle(s.vehicle.type, x, z, s.heading);
-      if (one) { v.x = x; v.z = z; v.heading = s.heading; v.alt = 0; }
+      if (!one) v.fromSave = true;
+      if (one) { v.x = x; v.z = z; v.heading = s.heading; v.alt = 0; v.y = undefined; v.climb = 0; }
       v.collideWorld();
       v.everBorrowed = true;
       this.player.teleport(v.x, v.z, s.heading);
@@ -472,7 +505,17 @@ export class Game {
 
   exitVehicle() {
     if (this.ride) this.endRide(false);
+    const v = this.player.vehicle;
+    const onRoof = v && v.spec.air && v.y - groundY(v.x, v.z) > 1.5;
     this.player.exit();
+    if (onRoof) {
+      // Down the roof ladder to the ground beside the building
+      const p = this.player;
+      let r = { x: p.x, z: p.z };
+      for (let i = 0; i < 4; i++) r = this.world.colliders.resolve(r.x, r.z, 0.7);
+      p.teleport(r.x, r.z, p.heading);
+      this.toast('🪜 You climb down the roof ladder. The chopper stays parked up top.');
+    }
   }
 
   helpNPC(npc) {
@@ -590,6 +633,7 @@ export class Game {
     this.world.update(dt, this.t);
     this.audio.setEngine(p.vehicle ? Math.abs(p.vehicle.speed) / p.vehicle.spec.maxSpeed : 0, !!p.vehicle);
     this.updateCamera(dt);
+    this.fadeLabels();
     this.updateSun();
     this.hud.update();
   }
@@ -649,11 +693,12 @@ export class Game {
     const py = v ? v.mesh.position.y : groundY(p.x, p.z);
     this.camPos.y = lerp(this.camPos.y, py + height, k);
     // Keep the camera out of buildings
-    const r = this.world.colliders.resolve(this.camPos.x, this.camPos.z, 0.6);
+    // (only things taller than the camera: up in the chopper it isn't shoved around by roofs)
+    const r = this.world.colliders.resolve(this.camPos.x, this.camPos.z, 0.6, this.camPos.y);
     const lookX = p.x + fx * 3, lookZ = p.z + fz * 3;
     this.camLook.set(lookX, py + 1.4, lookZ);
     // Never sink into a hillside behind the player
-    this.camPos.y = Math.max(this.camPos.y, groundY(r.x, r.z) + 1.3);
+    this.camPos.y = Math.max(this.camPos.y, this.world.surfaceAt(r.x, r.z) + 1.3); // or a roof
     this.camera.position.set(r.x, this.camPos.y, r.z);
     if (this.shakeAmt > 0) {
       this.camera.position.x += (Math.random() - 0.5) * this.shakeAmt;
@@ -661,6 +706,12 @@ export class Game {
       this.shakeAmt = Math.max(0, this.shakeAmt - dt * 2);
     }
     this.camera.lookAt(this.camLook);
+  }
+
+  // Building name tags hide when the camera is right next to one (e.g. on a rooftop)
+  fadeLabels() {
+    const c = this.camera.position;
+    for (const l of this.world.labels) l.visible = c.distanceToSquared(l.position) > 16 * 16;
   }
 
   updateSun() {
