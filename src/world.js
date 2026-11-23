@@ -7,6 +7,7 @@ import { lookFor, wallTexture, wallEdge, planSite, paintSite, BoxBatch, addDetai
 import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
 import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
+import { buildSolarCarports } from './solar.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -57,6 +58,7 @@ export class World {
     this.walkways = walks.walks;
     this.plazas = walks.pads;
     this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
+    this.planVehicleSpots();
     this.build();
   }
 
@@ -74,6 +76,9 @@ export class World {
     this.buildBoundary();
     this.buildTrees();
     this.buildStructures();
+    const solar = new BoxBatch();
+    buildSolarCarports(this, solar);
+    solar.flush(this.scene, !this.lowSpec);
     this.buildLaneHints();
   }
 
@@ -333,6 +338,8 @@ export class World {
         this.labels.push(label);
       }
     }
+    // No boulders where a road or walk crosses the wash
+    for (let i = rocks.length - 1; i >= 0; i--) if (this.pavedAt(rocks[i][0], -rocks[i][1], rocks[i][2] + 0.5)) rocks.splice(i, 1);
     const inst = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), mat(0xb3a587), rocks.length);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     rocks.forEach(([x, z, s], i) => {
@@ -413,6 +420,44 @@ export class World {
       m.receiveShadow = true;
       this.scene.add(m);
     }
+  }
+
+  // Where the tank and the helicopter park (world [x, z, heading])
+  planVehicleSpots() {
+    const spiral = (cx, cy, maxR, ok) => {
+      for (let r = 0; r <= maxR; r += 1.5) {
+        const n = Math.max(1, Math.round(r * 2));
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+          if (ok(x, y)) return [x, y];
+        }
+      }
+      return [cx, cy];
+    };
+    const nearBuilding = (x, y, m) => this.buildings.some((b) => pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < m);
+    // Helipad: open pavement in the Reese Center lot, with room for the rotor
+    const [ex, ey] = W(this.places.eastLot); // back to campus space
+    const pad = spiral(ex, ey, 60, (x, y) => {
+      if (Math.hypot(x - ex, y - ey) < 12) return false; // off the mission marker
+      const lot = CAMPUS.lots.find((l) => pointInPoly(x, y, l.poly));
+      return lot && distToPolyline(x, y, lot.poly, true) > 6 && !nearBuilding(x, y, 9);
+    });
+    // Line the chopper up with the nearest aisle
+    let ang = 0, bd = Infinity;
+    for (const r of CAMPUS.roads) {
+      if (r.kind !== 'aisle' && r.kind !== 'service') continue;
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const d = distToPolyline(pad[0], pad[1], [r.pts[i], r.pts[i + 1]]);
+        if (d < bd) { bd = d; ang = Math.atan2(r.pts[i + 1][0] - r.pts[i][0], -(r.pts[i + 1][1] - r.pts[i][1])); }
+      }
+    }
+    this.places.helipad = [pad[0], -pad[1], ang];
+    // Tank: open lawn at North Campus, off the walks and clear of the buildings
+    const [nx, ny] = W(this.places.northLawn);
+    const tank = spiral(nx, ny, 60, (x, y) => !this.pavedAt(x, y, 2.5) && !nearBuilding(x, y, 6) &&
+      Math.abs(heightAtCampus(x + 4, y) - heightAtCampus(x - 4, y)) < 0.8 && Math.abs(heightAtCampus(x, y + 4) - heightAtCampus(x, y - 4)) < 0.8);
+    // Facing the nearest street, like it's guarding the place
+    this.places.tankSpot = [tank[0], -tank[1], Math.PI * 0.85];
   }
 
   // The wall with the real entrance: the one by the building's mission spot, or else the
@@ -674,6 +719,8 @@ export class World {
     }
     const { blds, fields, pools } = this._plantCheck;
     if (this.pavedAt(x, y, m)) return false;
+    // Room for the parked tank and the helicopter's rotor
+    for (const [px, pz, , r] of [[...this.places.tankSpot, 6], [...this.places.helipad, 8]]) if (Math.hypot(x - px, y + pz) < r) return false;
     for (const b of blds) {
       if (x < b.x0 - 1 || x > b.x1 + 1 || y < b.y0 - 1 || y > b.y1 + 1) continue;
       if (pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < 1) return false;
@@ -850,8 +897,14 @@ export class World {
       const covered = probe.filter(([px, pz]) => this.buildings.some((b) => pointInPoly(px, pz, b.wpts))).length;
       if (covered >= 2) continue;
       if (!inLot && this.pavedAt(cx, cy, 0)) continue; // nothing standing in the road
+      // In a lot, a canopy whose posts would stand in a drive aisle is something parked
+      if (inLot && [[-0.45, -0.42], [0.45, -0.42], [0.45, 0.42], [-0.45, 0.42]].some(([a, b]) => {
+        const [px, pz] = at(a * len, b * wid);
+        return this.roads.some((r) => r.kind !== 'trail' && distToPolyline(px, pz, r.wpts) < r.width / 2 + 0.3);
+      })) continue;
       const campus = this.inCampus(x, z);
       q.setFromAxisAngle(up, ang); // local x along the long side
+      if (inLot) (this.lotCarports = this.lotCarports || []).push([cx, cy, Math.max(len, wid) / 2]);
       if (inLot || len > 14) {
         // Open carport / shade canopy: roof on posts, drive under it
         tops.push([m4.compose(v.set(x, gy + h - 0.15, z), q, sc.set(len, 0.3, wid)).clone(), campus && !inLot ? CAMPUS_STYLE.roof : 0x7d7f80]);

@@ -20,6 +20,9 @@ export class Vehicle {
     this.hornCd = 0;
     this.honkCd = 0;
     this.wheelSpin = 0;
+    this.alt = 0; // helicopter height above the ground
+    this.climb = 0;
+    this.rotorSpin = 0;
     this.circleR = this.spec.width * 0.55;
     this.circleOff = Math.max(0, this.spec.length / 2 - this.spec.width * 0.5);
     game.scene.add(this.mesh);
@@ -58,9 +61,17 @@ export class Vehicle {
     this.heading = Math.atan2(q[0] - p[0], q[1] - p[1]);
   }
 
+  get airborne() { return this.alt > 1.5; }
+
   update(dt) {
     let throttle = 0, steer = 0, handbrake = false;
     const inp = this.game.input;
+    if (this.spec.air) {
+      this.flight(dt);
+      this.hornCd = Math.max(0, this.hornCd - dt);
+      this.sync(dt);
+      return;
+    }
     if (this.drivenByPlayer) {
       throttle = inp.forward;
       steer = inp.turn;
@@ -96,13 +107,43 @@ export class Vehicle {
     this.speed = clamp(this.speed, -s.maxSpeed * 0.35, s.maxSpeed);
 
     this.steer += (steer - this.steer) * Math.min(1, dt * 8);
-    const grip = clamp(Math.abs(this.speed) / 5, 0, 1) * (handbrake ? 1.5 : 1);
-    const dir = this.speed >= 0 ? 1 : -1;
+    // Tracks turn in place; wheels need to be rolling to steer
+    const grip = s.tracks ? 1 : clamp(Math.abs(this.speed) / 5, 0, 1) * (handbrake ? 1.5 : 1);
+    const dir = s.tracks || this.speed >= 0 ? 1 : -1;
     this.heading -= this.steer * s.turn * grip * dir * dt;
 
     this.x += this.fx * this.speed * dt;
     this.z += this.fz * this.speed * dt;
     this.collideWorld();
+  }
+
+  // Helicopter: Space (📖) climbs, Shift (⚡) descends, forward/back fly, left/right turn.
+  // It needs to be off the ground to move, and lands wherever it's let down.
+  flight(dt) {
+    const s = this.spec, inp = this.game.input;
+    const flying = this.drivenByPlayer;
+    let fwd = 0, turn = 0, up = 0;
+    if (flying) {
+      fwd = inp.forward; turn = inp.turn;
+      up = (inp.isDown('throw') ? 1 : 0) - (inp.isDown('sprint') ? 1 : 0);
+    } else if (this.alt > 0) up = -1; // nobody at the controls: settle down
+    const target = this.alt > 1 ? fwd * (fwd < 0 ? s.maxSpeed * 0.35 : s.maxSpeed) : 0;
+    this.speed += (target - this.speed) * Math.min(1, dt * (fwd ? 0.9 : 0.6));
+    this.climb += (up * 7 - this.climb) * Math.min(1, dt * 3);
+    this.alt = clamp(this.alt + this.climb * dt, 0, 120);
+    if (this.alt <= 0) { this.climb = Math.max(0, this.climb); if (this.alt <= 0) this.speed *= Math.max(0, 1 - dt * 4); }
+    this.steer += (turn - this.steer) * Math.min(1, dt * 4);
+    if (this.alt > 0.5) this.heading -= this.steer * s.turn * dt;
+    this.x += this.fx * this.speed * dt;
+    this.z += this.fz * this.speed * dt;
+    // Stay over the map
+    const w = this.game.world, b = w.bounds;
+    this.x = clamp(this.x, b.minX + 6, b.maxX - 6);
+    this.z = clamp(this.z, b.minZ + 6, b.maxZ - 6);
+    // Low down it bumps into things like any vehicle; up high it clears the rooftops
+    if (this.alt < 14) this.collideWorld();
+    const spinUp = flying ? 1 : (this.alt > 0 ? 0.6 : 0);
+    this.rotorRate = (this.rotorRate || 0) + (spinUp * 28 - (this.rotorRate || 0)) * Math.min(1, dt * 0.8);
   }
 
   circles() {
@@ -184,12 +225,31 @@ export class Vehicle {
     };
     const p = g.player;
     if (!p.vehicle && check(p.x, p.z, 0.5)) return 'player';
-    for (const v of g.vehicles) if (v !== this && check(v.x, v.z, v.spec.width / 2)) return v.drivenByPlayer ? 'player' : 'car';
+    for (const v of g.vehicles) if (v !== this && !v.airborne && check(v.x, v.z, v.spec.width / 2)) return v.drivenByPlayer ? 'player' : 'car';
     for (const npc of g.npcs) if (npc.visible && check(npc.x, npc.z, 0.4)) return 'npc';
     return null;
   }
 
   sync(dt = 0) {
+    if (this.spec.air) {
+      // Body follows the ground when landed; in the air it noses down to fly forward and
+      // banks into turns
+      const L = this.spec.length * 0.3;
+      const hf = groundY(this.x + this.fx * L, this.z + this.fz * L), hb = groundY(this.x - this.fx * L, this.z - this.fz * L);
+      const g = Math.max(hf, hb);
+      const air = clamp(this.alt / 2, 0, 1);
+      this.mesh.position.set(this.x, (hf + hb) / 2 * (1 - air) + g * air + this.alt, this.z);
+      this.mesh.rotation.order = 'YXZ';
+      this.mesh.rotation.y = this.heading;
+      const groundPitch = -Math.atan2(hf - hb, 2 * L);
+      this.mesh.rotation.x = groundPitch * (1 - air) + air * clamp(this.speed / this.spec.maxSpeed, -0.5, 1) * 0.22;
+      this.mesh.rotation.z = -this.steer * 0.25 * air;
+      this.rotorSpin += (this.rotorRate || 0) * dt;
+      const ud = this.mesh.userData;
+      ud.rotor.rotation.y = this.rotorSpin;
+      ud.tailRotor.rotation.x = this.rotorSpin * 1.7;
+      return;
+    }
     // Sit on the ground: pitch and roll from the ground under the wheels
     const L = this.spec.length * 0.42, Wd = this.spec.width * 0.42;
     const hf = groundY(this.x + this.fx * L, this.z + this.fz * L), hb = groundY(this.x - this.fx * L, this.z - this.fz * L);
@@ -213,10 +273,17 @@ export class Vehicle {
     for (let i = 0; i < ws.length; i++) {
       ws[i].rotation.x = this.wheelSpin;
       // front wheels are the ones at +z (index 1 and 3)
-      ws[i].rotation.y = i % 2 === 1 ? -this.steer * 0.45 : 0;
+      ws[i].rotation.y = i % 2 === 1 && !this.mesh.userData.noSteer ? -this.steer * 0.45 : 0;
     }
     // Slight body lean in turns
-    this.mesh.rotation.z = tilt - this.steer * clamp(this.speed / 25, -1, 1) * 0.05;
+    this.mesh.rotation.z = tilt - (this.spec.tracks ? 0 : this.steer * clamp(this.speed / 25, -1, 1) * 0.05);
+    const ud = this.mesh.userData;
+    if (ud.turret) {
+      // The barrel recoils after a shot and the flash fades
+      this.fireT = Math.max(0, (this.fireT || 0) - dt);
+      ud.barrel.position.z = 1.45 - this.fireT * 1.2;
+      ud.flash.visible = this.fireT > 0.25;
+    }
   }
 
   dispose() {
@@ -233,15 +300,17 @@ export function vehicleContacts(game) {
     for (let j = i + 1; j < vs.length; j++) {
       const b = vs[j];
       if (Math.abs(a.x - b.x) > 8 || Math.abs(a.z - b.z) > 8) continue;
+      if (a.airborne || b.airborne) continue;
       const cb = b.circles();
       for (const p of ca) for (const q of cb) {
         const dx = p[0] - q[0], dz = p[1] - q[1];
         const d = Math.hypot(dx, dz), min = a.circleR + b.circleR;
         if (d < min && d > 1e-4) {
-          const push = (min - d) / 2;
           const nx = dx / d, nz = dz / d;
-          a.x += nx * push; a.z += nz * push;
-          b.x -= nx * push; b.z -= nz * push;
+          // The tank doesn't get shoved around; whatever it hits does
+          const wa = a.spec.heavy ? 0 : b.spec.heavy ? 1 : 0.5, wb = 1 - wa;
+          a.x += nx * (min - d) * wa; a.z += nz * (min - d) * wa;
+          b.x -= nx * (min - d) * wb; b.z -= nz * (min - d) * wb;
           const rel = Math.abs(a.speed - b.speed);
           if (rel > 2) {
             a.impact(rel, 0.5); b.impact(rel, 0.5);

@@ -519,10 +519,13 @@ export function buildStreetscape(world) {
     const n = Math.round(b.r * 3);
     for (let i = 0; i < n; i++) {
       const a = i * 2.4, r = Math.sqrt((i + 0.5) / n) * b.r * 0.85;
-      small.push([b.x + Math.cos(a) * r, b.y + Math.sin(a) * r, 0.45 + ((i * 37) % 5) * 0.08, b.colors[i % b.colors.length]]);
+      const x = b.x + Math.cos(a) * r, y = b.y + Math.sin(a) * r;
+      if (world.pavedAt(x, y, 0.5)) continue;
+      small.push([x, y, 0.45 + ((i * 37) % 5) * 0.08, b.colors[i % b.colors.length]]);
     }
     if (b.boulders) for (let i = 0; i < 3; i++) {
       const a = i * 2.1 + 0.5, x = b.x + Math.cos(a) * b.r * 0.6, y = b.y + Math.sin(a) * b.r * 0.6;
+      if (world.pavedAt(x, y, 0.6)) continue;
       boxes.add(0x9a9288, x, G(x, y) + 0.25, -y, 0.9, 0.6, 0.8, a, 0.2, 0.15);
     }
   }
@@ -544,6 +547,7 @@ export function buildStreetscape(world) {
       for (let k = 0; k < p.count; k++) {
         const d = (k - (p.count - 1) / 2) * 3.5;
         const [x, y] = [x0 + st.tx * d, y0 + st.ty * d];
+        if (world.pavedAt(x, y, 0.4)) continue;
         const g = G(x, y);
         boxes.add(0xe8e8e8, x, g + 4.5, -y, 0.14, 9, 0.14, 0);
         boxes.add(0xd4af37, x, g + 9.05, -y, 0.22, 0.22, 0.22, 0);
@@ -577,7 +581,9 @@ export function buildStreetscape(world) {
         let nx = -pt.ty, ny = pt.tx;
         if (!pointInPoly(pt.x + nx, pt.y + ny, lot.poly)) { nx = -nx; ny = -ny; }
         const x = pt.x + nx * 0.6, y = pt.y + ny * 0.6;
-        if (nearRoad(x, y, 0.3, ROADS.filter((r) => r.kind !== 'aisle')) || nearBuilding(x, y, 1)) continue;
+        if (nearRoad(x, y, 0.5) || nearBuilding(x, y, 1)) continue;
+        if (world.data.stalls.some((st) => Math.hypot(st[0] - x, st[1] - y) < 3.2)) continue;
+        if (Math.hypot(x - world.places.helipad[0], y + world.places.helipad[1]) < 9) continue;
         const g = G(x, y);
         boxes.add(black, x, g + 4.5, -y, 0.2, 9, 0.2, 0);
         boxes.add(black, x + nx * 0.5, g + 9, -(y + ny * 0.5), 1.2, 0.25, 0.5, ang(nx, ny));

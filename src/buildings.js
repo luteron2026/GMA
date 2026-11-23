@@ -310,6 +310,7 @@ export function addDetails(world, b, look, door, geo, boxes) {
       for (let k = 0; k < n; k++) {
         const t = k / n;
         const x = ax + (bx - ax) * t + nx * out, y = ay + (by - ay) * t + ny * out;
+        if (ring && world.pavedAt(x, y, 0.3)) continue; // the drive runs right past this wall
         const top = topAt(x, y) - 0.15;
         const g = Math.min(b.base, heightAtCampus(x, y) - 0.2);
         boxes.add(color, x, (g + top) / 2, -y, 0.7, top - g, 0.7, ang(tx, ty));
@@ -543,7 +544,7 @@ export function addSite(world, site, boxes) {
         if (!pointInPoly(x, y, c.poly) || pointInPoly(x, y, c.a.poly) || pointInPoly(x, y, c.b.poly)) continue;
         let near = Infinity;
         for (const b of [c.a, c.b]) for (let i = 0; i < b.poly.length; i++) near = Math.min(near, distToPolyline(x, y, [b.poly[i], b.poly[(i + 1) % b.poly.length]]));
-        if (near > 3) spots.push([x, y, near]);
+        if (near > 3 && !world.pavedAt(x, y, 1)) spots.push([x, y, near]);
       }
     }
     spots.sort((p, q) => q[2] - p[2]);
@@ -812,8 +813,11 @@ export function courtyardBridge(world, from, ring, b, y0, boxes, rail) {
   }
   // Brick columns under the middle of the span, and a door into the other building
   const g = heightAtCampus(cx, cy);
-  for (const side of [-1, 1]) boxes.add(CAMPUS_STYLE.brick, cx - ty * 1.2 * side, (g + y0) / 2, -(cy + tx * 1.2 * side), 0.6, y0 - g, 0.6, a);
-  world.colliders.addCircle(cx - ty * 1.2, -(cy + tx * 1.2), 0.4);
-  world.colliders.addCircle(cx + ty * 1.2, -(cy - tx * 1.2), 0.4);
+  for (const side of [-1, 1]) {
+    const x = cx - ty * 1.2 * side, y = cy + tx * 1.2 * side;
+    if (world.pavedAt(x, y, 0.3)) continue;
+    boxes.add(CAMPUS_STYLE.brick, x, (g + y0) / 2, -y, 0.6, y0 - g, 0.6, a);
+    world.colliders.addCircle(x, -y, 0.4);
+  }
   boxes.add(0x3a2c22, q[0] - tx * 0.05, y0 + 1.2, -(q[1] - ty * 0.05), 0.15, 2.4, 1.4, a);
 }

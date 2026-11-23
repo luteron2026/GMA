@@ -194,7 +194,7 @@ export function stallCorners([x, y, a], shrink = 0) {
     [x + tx * hl - ty * hw, y + ty * hl + tx * hw], [x - tx * hl - ty * hw, y - ty * hl + tx * hw]];
 }
 
-function obbOverlap(p, q) {
+export function obbOverlap(p, q) {
   for (const poly of [p, q]) {
     for (let i = 0; i < poly.length; i++) {
       const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length];
@@ -269,9 +269,23 @@ export function buildSurfaces(world) {
     if (m.text === 'STOP') S.paint.rect(m.x + m.hx * 3.95, m.y + m.hy * 3.95, m.hy, -m.hx, 3.4, 0.45, LINE.white);
   }
 
+  // Helipad in the Reese Center lot: a yellow ring around a white H
+  if (world.places.helipad) {
+    const [hx, hz, ha] = world.places.helipad;
+    const x = hx, y = -hz, ring = [];
+    for (let k = 0; k <= 48; k++) ring.push([x + Math.cos((k / 48) * Math.PI * 2) * 6.2, y + Math.sin((k / 48) * Math.PI * 2) * 6.2]);
+    S.paint.band(ring, 0.45, LINE.yellow);
+    // The H lines up with the chopper: its bars run along the nose direction (sin a, -cos a)
+    const tx = Math.sin(ha), ty = -Math.cos(ha);
+    for (const o of [-1.3, 1.3]) S.paint.rect(x - ty * o, y + tx * o, tx, ty, 4.2, 0.6, LINE.white);
+    S.paint.rect(x, y, -ty, tx, 2.6, 0.6, LINE.white);
+  }
+
   // Stall lines: one line between neighbors (stalls share them) plus a short end at the aisle
   const lines = [];
+  const pad = world.places.helipad;
   for (const s of world.data.stalls) {
+    if (pad && Math.hypot(s[0] - pad[0], s[1] + pad[1]) < 8.5) continue; // the helipad paints over these
     const tx = Math.cos(s[2]), ty = Math.sin(s[2]);
     for (const side of [-1, 1]) {
       const x = s[0] - ty * side * STALL_W / 2, y = s[1] + tx * side * STALL_W / 2;
