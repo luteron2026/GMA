@@ -261,6 +261,12 @@ export class Pickleball {
     this.hud.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);background:rgba(15,30,60,0.85);color:#fff;padding:8px 16px;border-radius:12px;font:600 16px system-ui,sans-serif;text-align:center;z-index:20;pointer-events:none;border:2px solid #c9a227';
     document.body.appendChild(this.hud);
     this.updateHud();
+    this.intro = `🏓 ${this.op.name} is up for a game. First to 7, win by 2.`;
+  }
+
+  exitPose() {
+    const [x, , z] = this.W(this.me.u, clamp(this.me.v, -2, 2));
+    return { x, z, heading: Math.atan2(this.c, -this.s) };
   }
 
   // Court frame (u along the court, v across, h up) -> world
@@ -326,8 +332,8 @@ export class Pickleball {
 
   update(dt) {
     const g = this.game, inp = g.input;
-    if (inp.wasPressed('action')) { g.toast('🏓 You left the court. Good game!'); g.endPickleball(); return; }
-    if (this.phase === 'done') { this.wait -= dt; if (this.wait <= 0) g.endPickleball(); this.draw(dt); return; }
+    if (inp.wasPressed('action')) { g.toast('🏓 You left the court. Good game!'); g.endSport(); return; }
+    if (this.phase === 'done') { this.wait -= dt; if (this.wait <= 0) g.endSport(); this.draw(dt); return; }
     // You: slide along your baseline (right on screen is -v)
     const prev = this.me.v;
     this.me.v = clamp(this.me.v - inp.turn * ME_SPEED * dt, -PB.hw - 0.4, PB.hw + 0.4);
@@ -474,6 +480,458 @@ export class Pickleball {
   dispose() {
     const scene = this.game.scene;
     for (const m of [this.opMesh, this.ballMesh, this.shadow, ...this.paddles, ...this.trail]) scene.remove(m);
+    this.hud.remove();
+  }
+}
+
+// ---------- beach volleyball ----------
+
+const V = { hl: 8, hw: 4, net: 2.43 }; // 16 x 8 m court
+const VG = 7.2; // a touch floaty, so there's time to get under it
+const V_WIN = 11;
+const BEACH_RIVALS = [['Pastor Dave', 'Coach Ramirez'], ['RA Brooke', 'RA Tyler'], ['Dr. Ellison', 'Dr. Ellison\'s TA'], ['The Smith Hall Twins', ''], ['Grandma Ruth', 'her grandson Kyle']];
+const BEACH_MATES = ['Hannah', 'Josiah', 'Abby', 'Caleb', 'Naomi'];
+
+// Two-on-two on the sand. You and a teammate on the near side (u < 0), two campus regulars on
+// the far side. Get under the ball and press Space: the receiver passes, the partner sets, and
+// the receiver attacks, beach-style. Near the net with a high set, Space jumps and spikes.
+// Steer your hits over the net with WASD (left/right picks the line, W deep, S a short dink).
+// Rally scoring, first to 11, win by 2.
+export class Volleyball {
+  constructor(game, court) {
+    this.game = game;
+    this.court = court;
+    this.c = Math.cos(court.a); this.s = Math.sin(court.a);
+    this.g = heightAtCampus(court.cx, court.cy);
+    const pair = BEACH_RIVALS[Math.floor(Math.random() * BEACH_RIVALS.length)];
+    this.opNames = pair[1] ? `${pair[0]} & ${pair[1]}` : pair[0];
+    this.mateName = BEACH_MATES[Math.floor(Math.random() * BEACH_MATES.length)];
+    const mk = (u, v, team, mesh) => ({ u, v, vu: 0, vv: 0, team, mesh, walk: 0, swing: 0, jump: 0, jv: 0, base: [u, v] });
+    const scene = game.scene;
+    const look = () => { const l = randomLook(); l.pants = 0x2b2f3a; return l; };
+    this.me = mk(-5, -2, 0, game.player.mesh);
+    this.mate = mk(-5, 2, 0, makePerson(Object.assign(look(), { shirt: 0x1f4fae })));
+    this.ops = [mk(5, -2, 1, makePerson(Object.assign(look(), { shirt: 0xc0392b }))), mk(5, 2, 1, makePerson(Object.assign(look(), { shirt: 0xc0392b })))];
+    this.all = [this.me, this.mate, ...this.ops];
+    for (const p of [this.mate, ...this.ops]) scene.add(p.mesh);
+    this.ball = { u: 0, v: 0, h: 1, vu: 0, vv: 0, vh: 0 };
+    this.ballMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.17, 1), new THREE.MeshLambertMaterial({ color: 0xf6f1e0, flatShading: true }));
+    const stripe = new THREE.Mesh(new THREE.TorusGeometry(0.172, 0.025, 4, 16), mat(0x2a5fb8));
+    this.ballMesh.add(stripe);
+    scene.add(this.ballMesh);
+    this.shadow = new THREE.Mesh(new THREE.CircleGeometry(0.16, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }));
+    this.shadow.rotation.x = -Math.PI / 2;
+    // Where the ball will come down on your side (green when it's yours to play)
+    this.marker = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.62, 24), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }));
+    this.marker.rotation.x = -Math.PI / 2;
+    scene.add(this.shadow, this.marker);
+    this.score = [0, 0];
+    this.serveTeam = 0;
+    this.servers = [this.me, this.ops[0]];
+    this.touch = { team: -1, n: 0, last: null };
+    this.buffer = 0;
+    this.msg = '';
+    this.hud = document.createElement('div');
+    this.hud.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);background:rgba(15,30,60,0.85);color:#fff;padding:8px 16px;border-radius:12px;font:600 16px system-ui,sans-serif;text-align:center;z-index:20;pointer-events:none;border:2px solid #c9a227;max-width:92vw';
+    document.body.appendChild(this.hud);
+    this.newServe();
+    this.intro = `🏐 You and ${this.mateName} vs ${this.opNames}. First to ${V_WIN}, win by 2.`;
+  }
+
+  W(u, v, h = 0) {
+    const x = this.court.cx + this.c * u - this.s * v, y = this.court.cy + this.s * u + this.c * v;
+    return [x, this.g + h, -y];
+  }
+
+  exitPose() {
+    const [x, , z] = this.W(clamp(this.me.u, -9, -1), clamp(this.me.v, -4, 4));
+    return { x, z, heading: Math.atan2(this.c, -this.s) };
+  }
+
+  partner(p) { return p === this.me ? this.mate : p === this.mate ? this.me : p === this.ops[0] ? this.ops[1] : this.ops[0]; }
+  side(p) { return p.team === 0 ? -1 : 1; } // which half of the court (sign of u)
+
+  newServe() {
+    const srv = this.servers[this.serveTeam];
+    this.server = srv;
+    this.phase = 'serve';
+    this.wait = srv === this.me ? 0.4 : 1.3;
+    this.touch = { team: -1, n: 0, last: null };
+    this.missed = null;
+    this.ball.spike = false;
+    for (const p of this.all) { p.vu = p.vv = 0; p.jump = 0; }
+    // Everyone to receive positions; the server steps behind the baseline
+    this.me.u = -5; this.me.v = -2; this.mate.u = -5; this.mate.v = 2;
+    this.ops[0].u = 5; this.ops[0].v = -2; this.ops[1].u = 5; this.ops[1].v = 2;
+    srv.u = this.side(srv) * (V.hl + 0.8); srv.v = srv.v > 0 ? 1.5 : -1.5;
+    if (srv === this.me) this.msg = 'Your serve: aim with WASD, press Space (📖)';
+    this.updateHud();
+  }
+
+  // Send the ball from where it is to land at (tu, tv), peaking at `apex` meters
+  lob(tu, tv, apex) {
+    const b = this.ball;
+    apex = Math.max(apex, b.h + 0.3);
+    b.vh = Math.sqrt(2 * VG * (apex - b.h));
+    const t = (b.vh + Math.sqrt(b.vh * b.vh + 2 * VG * b.h)) / VG;
+    b.vu = (tu - b.u) / t; b.vv = (tv - b.v) / t;
+  }
+
+  // A hard driven hit (spike/serve) toward (tu, tv) at `speed`, straight down onto it
+  drive(tu, tv, speed) {
+    const b = this.ball;
+    const d = Math.hypot(tu - b.u, tv - b.v), t = d / speed;
+    b.vu = (tu - b.u) / t; b.vv = (tv - b.v) / t;
+    b.vh = (0 - b.h + 0.5 * VG * t * t) / t;
+  }
+
+  // Ball height when it crosses the net on its current path (null if it won't)
+  netHeight() {
+    const b = this.ball;
+    if (Math.abs(b.vu) < 1e-3 || Math.sign(-b.u) !== Math.sign(b.vu)) return null;
+    const t = -b.u / b.vu;
+    return b.h + b.vh * t - 0.5 * VG * t * t;
+  }
+
+  // When the ball next drops to height h (after the peak), and where it is then
+  predict(h) {
+    const b = this.ball;
+    const disc = b.vh * b.vh + 2 * VG * (b.h - h);
+    if (disc < 0) return null;
+    const t = (b.vh + Math.sqrt(disc)) / VG;
+    return { t, u: b.u + b.vu * t, v: b.v + b.vv * t };
+  }
+
+  // The open spot on the other side: away from both defenders
+  gap(team, depth) {
+    const sg = team === 0 ? 1 : -1;
+    const def = team === 0 ? this.ops : [this.me, this.mate];
+    let best = null, bs = -1;
+    for (let u = 1.8; u <= 7.4; u += 0.8) {
+      for (let v = -3.4; v <= 3.4; v += 0.8) {
+        const s = Math.min(...def.map((d) => Math.hypot(d.u - sg * u, d.v - v))) - (depth ? Math.abs(u - depth) * 0.4 : 0);
+        if (s > bs) { bs = s; best = [sg * u, v]; }
+      }
+    }
+    return best;
+  }
+
+  // `p` plays the ball. Which touch this is decides what they do with it.
+  hit(p, aim = null) {
+    const b = this.ball, sg = this.side(p);
+    if (this.touch.team !== p.team) this.touch = { team: p.team, n: 0, last: null };
+    this.touch.n++;
+    this.touch.last = p;
+    p.swing = 0.3;
+    const mate = this.partner(p);
+    const ai = p !== this.me;
+    this.ball.spike = false;
+    this.missed = null;
+    const err = ai ? (p.team === 1 ? 1 : 0.6) : 0;
+    const overNow = this.touch.n >= 3 || (aim && aim.over);
+    this.game.audio.tone(this.touch.n === 3 || overNow ? 300 : 420, 0.06, 'triangle', 0.25);
+    if (!overNow) {
+      // Pass or set to your partner, close to the net in front of them
+      const tu = sg * (this.touch.n === 1 ? 2.6 : 1.4), tv = clamp(mate.v, -3, 3);
+      this.lob(tu + (Math.random() - 0.5) * err, tv + (Math.random() - 0.5) * err, this.touch.n === 1 ? 4.6 : 4.2);
+      mate.target = [tu, tv];
+      return;
+    }
+    // Over the net (whichever touch it was, it's the other side's ball now)
+    this.touch.n = 3;
+    let [tu, tv] = this.gap(p.team, aim && aim.depth);
+    // Nobody but you finds the gap perfectly
+    if (ai) { tu += (Math.random() - 0.5) * 2.4; tv += (Math.random() - 0.5) * 2.4; tu = Math.sign(tu) * clamp(Math.abs(tu), 1.5, V.hl - 0.3); tv = clamp(tv, -V.hw + 0.3, V.hw - 0.3); }
+    if (aim && aim.v !== null) tv = aim.v;
+    if (aim && aim.depth) tu = -sg * aim.depth;
+    const spike = b.h > 2.25 && Math.abs(b.u) < 3.2;
+    if (ai && Math.random() < (p.team === 1 ? 0.12 : 0.06)) {
+      // Unforced error: long, wide, or into the net
+      const r = Math.random();
+      if (r < 0.4) tu = -sg * (V.hl + 1.5); else if (r < 0.8) tv = Math.sign(tv || 1) * (V.hw + 1.2);
+      else { this.drive(-sg * 1, tv, 12); this.ball.vh = -2; return; }
+    }
+    if (spike) {
+      if (ai) tu = Math.sign(tu) * Math.max(Math.abs(tu), 4.8); // aimed deep enough to clear the net
+      this.drive(tu, tv, ai ? 13 + Math.random() * 3 : 17);
+      this.ball.spike = true;
+      // Too flat to clear the net from here: hit it higher
+      const nh = this.netHeight();
+      if (nh !== null && nh < V.net + 0.15) this.lob(tu, tv, 3.6);
+      else if (!ai) { this.msg = '💥 Spike!'; p.jump = 0.01; p.jv = 3.2; }
+      else { p.jump = 0.01; p.jv = 3.2; }
+    } else {
+      this.lob(tu, tv, Math.max(4.2, b.h + 1.2));
+    }
+  }
+
+  serve(p, aim) {
+    const b = this.ball, sg = this.side(p);
+    b.u = p.u - sg * 0.4; b.v = p.v; b.h = 2.4;
+    let [tu, tv] = this.gap(p.team, 5.5);
+    if (aim && aim.v !== null) tv = aim.v;
+    if (aim && aim.depth) tu = -sg * aim.depth;
+    if (p.team === 1 && Math.random() < 0.08) tu = -sg * (V.hl + 1.2); // long
+    this.lob(tu, tv, 5.4);
+    p.swing = 0.3;
+    this.touch = { team: p.team, n: 3, last: p };
+    this.phase = 'rally';
+    this.game.audio.throw();
+  }
+
+  // Where you're steering the ball with the keys
+  myAim() {
+    const inp = this.game.input;
+    const f = inp.forward, t = inp.turn;
+    return { v: Math.abs(t) > 0.3 ? -t * 3.2 : null, depth: f > 0.3 ? 7 : f < -0.3 ? 2.2 : 0, over: f > 0.3 };
+  }
+
+  point(team, why) {
+    this.score[team]++;
+    this.msg = `${team === 0 ? '✅ Your point' : `❌ Their point`}: ${why}`;
+    if (team === 0) this.game.audio.pickup(); else this.game.audio.bump();
+    // Side-out: the team that wins the rally serves, switching servers each time they win it back
+    if (this.serveTeam !== team) {
+      this.serveTeam = team;
+      const pair = team === 0 ? [this.me, this.mate] : this.ops;
+      this.servers[team] = this.servers[team] === pair[0] ? pair[1] : pair[0];
+    }
+    this.phase = 'between';
+    this.wait = 1.6;
+    const [a, b] = this.score;
+    if ((a >= V_WIN || b >= V_WIN) && Math.abs(a - b) >= 2) this.finish(a > b);
+    this.updateHud();
+  }
+
+  finish(won) {
+    const g = this.game;
+    if (won) {
+      g.toast(`🏆 You and ${this.mateName} beat ${this.opNames} ${this.score[0]}–${this.score[1]}! Sandy high-fives all round.`);
+      g.addCredits(100);
+      g.goodDeed(30);
+      g.audio.win();
+    } else {
+      g.toast(`🏐 ${this.opNames} win ${this.score[1]}–${this.score[0]}. You helped rake the court afterwards. (+20 for sportsmanship)`);
+      g.addCredits(20);
+    }
+    this.phase = 'done';
+    this.wait = 2.5;
+  }
+
+  // Run toward (tu, tv), stopping smoothly
+  run(p, tu, tv, speed, dt) {
+    const du = tu - p.u, dv = tv - p.v, d = Math.hypot(du, dv);
+    const want = d < 0.1 ? 0 : Math.min(speed, d * 3);
+    const wu = d > 0 ? (du / d) * want : 0, wv = d > 0 ? (dv / d) * want : 0;
+    const acc = 14 * dt;
+    const eu = wu - p.vu, ev = wv - p.vv, el = Math.hypot(eu, ev);
+    if (el > acc) { p.vu += (eu / el) * acc; p.vv += (ev / el) * acc; } else { p.vu = wu; p.vv = wv; }
+  }
+
+  // Can `p` reach the ball right now?
+  inReach(p) {
+    const b = this.ball;
+    // AI hitters time their jump for the attack; you jump with Space near the net
+    const attacking = p !== this.me && this.touch.team === p.team && this.touch.n === 2 && Math.abs(p.u) < 2.8;
+    const top = p.jump > 0 || attacking ? 3.5 : 2.7;
+    // AI defenders dive for balls a bit further away
+    const reach = p === this.me ? 1.3 : 1.6;
+    return Math.hypot(b.u - p.u, b.v - p.v) < reach && b.h > 0.35 && b.h < top && Math.sign(b.u || -1) === this.side(p);
+  }
+
+  // Who on `team` should play the next ball
+  receiver(team) {
+    const pair = team === 0 ? [this.me, this.mate] : this.ops;
+    if (this.touch.team === team && this.touch.last) return this.partner(this.touch.last);
+    const land = this.predict(1.0);
+    if (!land) return pair[0];
+    const d = pair.map((p) => Math.hypot(p.u - land.u, p.v - land.v));
+    return d[0] <= d[1] ? pair[0] : pair[1];
+  }
+
+  update(dt) {
+    const g = this.game, inp = g.input;
+    if (inp.wasPressed('action')) { g.toast('🏐 You left the court. Good game!'); g.endSport(); return; }
+    this.buffer = Math.max(0, this.buffer - dt);
+    if (inp.wasPressed('throw')) this.buffer = 0.35;
+    for (const p of this.all) {
+      p.swing = Math.max(0, p.swing - dt);
+      if (p.jump > 0) { p.jump += p.jv * dt; p.jv -= 9.8 * dt; if (p.jump <= 0) { p.jump = 0; p.jv = 0; } }
+    }
+    if (this.phase === 'done') { this.wait -= dt; if (this.wait <= 0) g.endSport(); this.draw(dt); return; }
+    if (this.phase === 'between') { this.wait -= dt; if (this.wait <= 0) { this.msg = ''; this.newServe(); } this.draw(dt); return; }
+
+    // You: run around your half (and a little beyond the lines)
+    const sp = inp.isDown('sprint') ? 6.4 : 5.2;
+    const f = inp.forward, t = inp.turn;
+    const me = this.me;
+    if (this.phase === 'serve' && this.server === me) {
+      me.v = clamp(me.v - t * 3 * dt, -V.hw + 0.3, V.hw - 0.3);
+      me.vu = me.vv = 0;
+    } else {
+      this.run(me, me.u + f * 3, me.v - t * 3, (Math.abs(f) + Math.abs(t) > 0.1 ? sp : 0), dt);
+      if (Math.abs(f) + Math.abs(t) < 0.1) { me.vu *= Math.max(0, 1 - dt * 10); me.vv *= Math.max(0, 1 - dt * 10); }
+    }
+
+    const b = this.ball;
+    if (this.phase === 'serve') {
+      const srv = this.server;
+      b.u = srv.u - this.side(srv) * 0.3; b.v = srv.v + 0.3; b.h = 1.2; b.vu = b.vv = b.vh = 0;
+      this.wait -= dt;
+      if (srv === me) {
+        if (this.buffer > 0 && this.wait <= 0) { this.buffer = 0; this.msg = ''; this.serve(me, this.myAim()); }
+      } else if (this.wait <= 0) { this.msg = ''; this.serve(srv, null); }
+      this.position(dt, true);
+      this.move(dt);
+      this.draw(dt);
+      return;
+    }
+
+    // Rally
+    const prevU = b.u;
+    b.u += b.vu * dt; b.v += b.vv * dt; b.h += b.vh * dt; b.vh -= VG * dt;
+    // Into the net?
+    if ((prevU < 0) !== (b.u < 0) && b.h < V.net + 0.05 && Math.abs(b.v) < V.hw + 0.6) {
+      b.u = prevU < 0 ? -0.15 : 0.15; b.vu = 0; b.vv *= 0.2; b.vh = Math.min(b.vh, 0);
+      const last = this.touch.last;
+      this.game.audio.tone(200, 0.1, 'sine', 0.15);
+      this.netFault = last ? last.team : 0;
+    }
+    if (b.h <= 0.17) {
+      b.h = 0.17;
+      const inCourt = Math.abs(b.u) <= V.hl + 0.1 && Math.abs(b.v) <= V.hw + 0.1;
+      const hitter = this.touch.last ? this.touch.last.team : 0;
+      if (this.netFault !== undefined) { const nf = this.netFault; this.netFault = undefined; this.point(1 - nf, nf === 0 ? 'into the net' : 'into the net on their side'); }
+      else if (inCourt) this.point(b.u < 0 ? 1 : 0, b.u < 0 ? 'it landed in your court' : 'it landed in!');
+      else this.point(1 - hitter, hitter === 0 ? 'your hit went out' : 'their hit went out');
+      this.draw(dt);
+      return;
+    }
+
+    // Who's playing it
+    // Next to play it: the other side once it's been sent over (or served), else the same side
+    const recvTeam = this.touch.n >= 3 ? 1 - this.touch.team : this.touch.team;
+    this.recv = this.touch.team === recvTeam && this.touch.n >= 3 ? null : this.receiver(recvTeam);
+    // AI players hit as soon as they can reach it; you press Space
+    for (const p of [this.mate, ...this.ops]) {
+      if (p === this.recv && this.inReach(p) && b.vh < 1 && this.touch.last !== p && this.missed !== p) {
+        // Digging out a hard spike (or a ball they had to sprint for) doesn't always work
+        if (this.touch.team !== p.team) {
+          const stretch = Math.hypot(b.u - p.u, b.v - p.v);
+          const pDig = (b.spike ? 0.55 : 0.9) - Math.max(0, stretch - 1) * 0.5 - (p.team === 0 ? 0 : 0.05);
+          if (Math.random() > pDig) {
+            this.missed = p;
+            if (Math.random() < 0.5) {
+              // Shanked off the arms
+              b.vu = (Math.random() - 0.5) * 6; b.vv = (Math.random() - 0.5) * 8; b.vh = 3 + Math.random() * 2;
+              this.touch = { team: p.team, n: 1, last: p };
+              p.swing = 0.3;
+              this.game.audio.tone(250, 0.05, 'triangle', 0.2);
+            }
+            break;
+          }
+        }
+        if (b.h > 2.6) { p.jump = 0.01; p.jv = 3.0; }
+        this.hit(p);
+        break;
+      }
+    }
+    if (this.buffer > 0 && this.recv === me && this.inReach(me) && this.touch.last !== me) {
+      this.buffer = 0;
+      // Up at the net on a high ball: jump into it
+      if (b.h > 2.0 && Math.abs(me.u) < 3.4) { me.jump = 0.01; me.jv = 3.4; }
+      this.hit(me, this.myAim());
+      if (!this.msg.startsWith('💥')) this.msg = '';
+    }
+    // A spike needs a jump: if you're near the net and the set is coming down, jump on Space
+    if (this.buffer > 0 && this.recv === me && !this.inReach(me) && me.jump === 0 && Math.abs(me.u) < 3.4 && b.h > 2.6 && b.vh < 0 &&
+      Math.hypot(b.u - me.u, b.v - me.v) < 1.8) { me.jump = 0.01; me.jv = 3.4; }
+    this.position(dt, false);
+    this.move(dt);
+    this.draw(dt);
+  }
+
+  // AI footwork
+  position(dt, serving) {
+    const b = this.ball;
+    for (const p of [this.mate, ...this.ops]) {
+      if (serving && p === this.server) { p.vu = p.vv = 0; continue; }
+      const sg = this.side(p), spd = p.team === 1 ? 5.4 : 5.2;
+      let tu = sg * 5, tv = p === this.mate ? clamp(this.me.v * -0.5 + 2, -3.2, 3.2) : p.base[1];
+      if (!serving && p === this.recv) {
+        // Get to where it'll drop to waist height (or under the set, if it's for you)
+        const land = this.predict(1.0);
+        if (land) { tu = land.u; tv = land.v; }
+      } else if (!serving && this.touch.team === p.team && this.touch.last === p) {
+        // Just passed: back off for the attack
+        tu = sg * 3.8; tv = p.v;
+      } else if (!serving && this.touch.team !== p.team && Math.sign(b.u) !== sg) {
+        // Other side has it: split the court to defend
+        const mateP = this.partner(p);
+        tu = sg * 5; tv = p.v >= mateP.v ? 1.8 : -1.8;
+      }
+      tu = sg * clamp(Math.abs(tu), 0.6, V.hl + 2);
+      this.run(p, tu, clamp(tv, -V.hw - 1.5, V.hw + 1.5), spd, dt);
+    }
+  }
+
+  move(dt) {
+    for (const p of this.all) {
+      p.u += p.vu * dt; p.v += p.vv * dt;
+      // Stay on your own side of the net
+      const sg = this.side(p);
+      p.u = sg * clamp(sg * p.u, 0.4, V.hl + 3);
+      p.v = clamp(p.v, -V.hw - 2.5, V.hw + 2.5);
+      p.walk += Math.hypot(p.vu, p.vv) * dt * 2.4;
+    }
+  }
+
+  updateHud() {
+    const touch = this.game.input.isTouch;
+    const help = touch ? 'Stick: run · 📖 hit when it reaches you (aim with the stick) · ✋ quit'
+      : '<b>WASD</b> run · <b>Space</b> hit when it reaches you (hold <b>A/D</b> to aim, <b>W</b> to send it over, <b>S</b> to dink) · <b>E</b> quit';
+    const html = `🏐 <b>You & ${this.mateName} ${this.score[0]}</b> – ${this.score[1]} ${this.opNames}<br><span style="font-weight:400;font-size:13px">${this.msg || help}</span>`;
+    if (html !== this._hud) { this.hud.innerHTML = html; this._hud = html; }
+  }
+
+  draw(dt) {
+    const face = Math.atan2(this.c, -this.s); // heading toward +u
+    for (const p of this.all) {
+      const [x, y, z] = this.W(p.u, p.v, p.jump);
+      p.mesh.position.set(x, y, z);
+      p.mesh.rotation.y = p.team === 0 ? face : face + Math.PI;
+      p.mesh.visible = true;
+      animatePerson(p.mesh, p.walk, Math.min(1, Math.hypot(p.vu, p.vv) / 5), { throwing: p.swing > 0 || p.jump > 0 });
+      const parts = p.mesh.userData.parts;
+      if (parts && (p.swing > 0 || p.jump > 0)) parts.armL.rotation.x = -2.4;
+    }
+    const b = this.ball;
+    const [bx, by, bz] = this.W(b.u, b.v, b.h);
+    this.ballMesh.position.set(bx, by, bz);
+    this.ballMesh.rotation.x += dt * 4; this.ballMesh.rotation.z += dt * 2;
+    const [sx, sy, sz] = this.W(b.u, b.v, 0.03);
+    this.shadow.position.set(sx, sy, sz);
+    // Landing marker for balls coming to your side
+    const land = this.phase === 'rally' ? this.predict(0.17) : null;
+    const show = land && land.u < 0 && b.vh < 6;
+    this.marker.visible = !!show;
+    if (show) {
+      const [mx, my, mz] = this.W(land.u, land.v, 0.05);
+      this.marker.position.set(mx, my, mz);
+      this.marker.material.color.set(this.recv === this.me ? (this.inReach(this.me) ? 0x4cd964 : 0xffd23f) : 0x9fb4d8);
+    }
+    // Camera behind your baseline, high enough to see both sides
+    const cam = this.game.camera;
+    const [cx, cy, cz] = this.W(-15.5, this.me.v * 0.35, 7.5);
+    cam.position.lerp(new THREE.Vector3(cx, cy, cz), Math.min(1, dt * 4));
+    const [lx, ly, lz] = this.W(0.5, this.me.v * 0.15, 0.6);
+    cam.lookAt(lx, ly, lz);
+    this.updateHud();
+  }
+
+  dispose() {
+    const scene = this.game.scene;
+    for (const m of [this.mate.mesh, ...this.ops.map((o) => o.mesh), this.ballMesh, this.shadow, this.marker]) scene.remove(m);
     this.hud.remove();
   }
 }
