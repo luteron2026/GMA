@@ -9,6 +9,7 @@ import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeigh
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 import { buildSolarCarports } from './solar.js';
 import { planCourts, buildCourts } from './sports.js';
+import { planPitch, paintPitch, buildPitch } from './soccer.js';
 import { planDixonFireplace, DixonFireplace } from './fireplace.js';
 import { buildTrophyCoffee } from './trophy.js';
 
@@ -57,6 +58,7 @@ export class World {
     this.site = planSite(this); // fountains, pool, courtyards from the Street View notes
     this.street = planStreetscape(this); // signs, poles, fences, gates from the Street View notes
     this.courts = planCourts(); // pickleball and sand volleyball at West Campus
+    this.pitch = planPitch(); // soccer on the intramural field
     // Concrete walks between entrances, drives and lots; trees and shrubs keep off them
     const walks = planWalkways(this, (b) => this.doorEdge(b));
     this.walkways = walks.walks;
@@ -86,6 +88,7 @@ export class World {
     const extra = new BoxBatch();
     buildSolarCarports(this, extra);
     buildCourts(this, extra);
+    buildPitch(this, extra);
     this.buildTrophy(extra);
     if (this.fireSpot) this.fireplace = new DixonFireplace(this, this.fireSpot, extra);
     this.buildBackyardPools();
@@ -241,6 +244,7 @@ export class World {
     for (const lawn of CAMPUS.lawns) {
       if (lawn.lines && (lawn.kind === 'pitch' || lawn.kind === 'court')) this.paintFieldLines(ctx, P, ppm, lawn.lines, lawn.kind === 'pitch');
     }
+    if (this.pitch) paintPitch(ctx, P, ppm, this.pitch);
     // Baseball diamond
     const d = CAMPUS.diamond;
     fillPoly(d.dirt, '#b5683f');

@@ -12,7 +12,8 @@ import { loadSave, writeSave, clearSave, hasProgress } from './save.js';
 import { VEHICLE_TYPES } from './models.js';
 import { clamp, lerp, mulberry32, pointInPoly } from './physics.js';
 import { groundY } from './terrain.js';
-import { Pickleball } from './sports.js';
+import { Pickleball, Volleyball } from './sports.js';
+import { Soccer } from './soccer.js';
 
 const BORROW_LINES = [
   'You shared Romans 12:13 ("practice hospitality"). The driver insists you borrow the car.',
@@ -216,7 +217,7 @@ export class Game {
   // its roads with drivers, the tank, chopper and forklift on their pads
   resetVehicles() {
     if (this.state !== 'play' && this.state !== 'pause') return;
-    if (this.pickle) this.endPickleball();
+    if (this.sport) this.endSport();
     if (this.player.vehicle) {
       const v = this.player.vehicle;
       const up = v.spec.air && v.y - groundY(v.x, v.z) > 0.3;
@@ -371,7 +372,7 @@ export class Game {
 
   pause(on) {
     if (this.state === 'title' || this.state === 'ending') return;
-    this.state = on ? 'pause' : (this.pickle ? 'pickle' : 'play');
+    this.state = on ? 'pause' : (this.sport ? 'sport' : 'play');
     document.getElementById('pause').classList.toggle('show', on);
     document.getElementById('abandon').style.display = this.missions.active ? '' : 'none';
     this.clock.getDelta();
@@ -495,7 +496,19 @@ export class Game {
     if (!p.vehicle && cb && !this.missions.active && pointInPoly(p.x, -p.z, cb.outline)) {
       let best = null, bd = Infinity;
       for (const c of this.world.courts.pickle) { const d = Math.hypot(c.cx - p.x, c.cy + p.z); if (d < bd) { bd = d; best = c; } }
-      if (best) return { text: '🏓 Play <b>pickleball</b>', fn: () => this.startPickleball(best) };
+      if (best) return { text: '🏓 Play <b>pickleball</b>', fn: () => this.startSport(new Pickleball(this, best)) };
+    }
+    // Sand volleyball next to them
+    const sb = this.world.courts && this.world.courts.sandBlock;
+    if (!p.vehicle && sb && !this.missions.active && pointInPoly(p.x, -p.z, sb.outline)) {
+      let best = null, bd = Infinity;
+      for (const c of this.world.courts.volley) { const d = Math.hypot(c.cx - p.x, c.cy + p.z); if (d < bd) { bd = d; best = c; } }
+      if (best) return { text: '🏐 Play <b>beach volleyball</b>', fn: () => this.startSport(new Volleyball(this, best)) };
+    }
+    // Soccer on the intramural field
+    const pitch = this.world.pitch;
+    if (!p.vehicle && pitch && !this.missions.active && pointInPoly(p.x, -p.z, pitch.outline)) {
+      return { text: '⚽ Play <b>soccer</b>', fn: () => this.startSport(new Soccer(this, pitch)) };
     }
     // Offer rides from a vehicle
     if (p.vehicle && !this.ride && Math.abs(p.vehicle.speed) < 3) {
@@ -571,22 +584,23 @@ export class Game {
     this.audio.pickup();
   }
 
-  startPickleball(court) {
-    this.pickle = new Pickleball(this, court);
-    this.state = 'pickle';
+  // Pickleball, volleyball and soccer each take over the controls and camera until you quit
+  startSport(sport) {
+    this.sport = sport;
+    this.state = 'sport';
     this.hud.setPrompt(null);
-    this.toast(`🏓 ${this.pickle.op.name} is up for a game. First to 7, win by 2.`);
+    if (sport.intro) this.toast(sport.intro);
   }
 
-  endPickleball() {
-    const pk = this.pickle;
-    if (!pk) return;
-    pk.dispose();
-    this.pickle = null;
-    // Back on your feet beside the court you played on
-    const [x, , z] = pk.W(pk.me.u, clamp(pk.me.v, -2, 2));
+  endSport() {
+    const sp = this.sport;
+    if (!sp) return;
+    sp.dispose();
+    this.sport = null;
+    // Back on your feet where you were playing
+    const { x, z, heading } = sp.exitPose();
     const r = this.world.colliders.resolve(x, z, 0.6);
-    this.player.teleport(r.x, r.z, Math.atan2(pk.c, -pk.s));
+    this.player.teleport(r.x, r.z, heading);
     this.state = 'play';
   }
 
@@ -658,10 +672,10 @@ export class Game {
       this.toast(m ? '🔇 Sound off' : '🔊 Sound on');
       document.getElementById('btn-mute').textContent = m ? '🔇' : '🔊';
     }
-    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause' || this.state === 'pickle')) this.pause(this.state !== 'pause');
+    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause' || this.state === 'sport')) this.pause(this.state !== 'pause');
 
     if (this.state === 'play') this.update(dt);
-    else if (this.state === 'pickle') { this.pickle.update(dt); this.updateWorldOnly(dt); this.fadeLabels(); }
+    else if (this.state === 'sport') { this.sport.update(dt); this.updateWorldOnly(dt); this.fadeLabels(); }
     else if (this.state === 'title') this.titleCam(dt);
     else if (this.state === 'faint' || this.state === 'ending') { this.updateWorldOnly(dt); this.updateCamera(dt); }
 
@@ -799,7 +813,7 @@ export class Game {
   // Building name tags hide when the camera is right next to one (e.g. on a rooftop)
   fadeLabels() {
     const c = this.camera.position;
-    for (const l of this.world.labels) l.visible = !this.pickle && c.distanceToSquared(l.position) > 16 * 16;
+    for (const l of this.world.labels) l.visible = !this.sport && c.distanceToSquared(l.position) > 16 * 16;
   }
 
   updateSun() {
