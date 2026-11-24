@@ -208,9 +208,15 @@ export function buildCourts(world, boxes) {
 
 const OPPONENTS = ['Pastor Dave', 'Coach Ramirez', 'Dr. Ellison (Old Testament)', 'RA Brooke', 'Grandma Ruth from church'];
 const WIN = 7;
+const START_SPEED = 6.5, SPEEDUP = 1.07, MAX_SPEED = 24; // m/s, and how much faster each return gets
+const REACH = 0.8; // how far from your middle the paddle still gets the ball (m)
+const ME_SPEED = 7.5, OP_SPEED = 5.2;
 
-// A game of pickleball on one court: you on the near side (u < 0), a campus regular on the
-// other. Move with WASD / the stick, swing with Space / 📖. Rally scoring to 7, win by 2.
+// Pickleball played like Pong, on one court: you on the near baseline (u < 0), a campus
+// regular on the far one. Slide side to side with A/D or the stick; the ball comes off your
+// paddle at an angle that depends on where it hits, bounces off the sidelines, and gets a
+// little faster with every return. Space serves (and, pressed just before contact, smashes).
+// First to 7, win by 2.
 export class Pickleball {
   constructor(game, court) {
     this.game = game;
@@ -219,23 +225,33 @@ export class Pickleball {
     const a = court.a + (court.flip ? Math.PI : 0);
     this.c = Math.cos(a); this.s = Math.sin(a);
     this.g = court.ground ?? heightAtCampus(court.cx, court.cy);
-    this.me = { u: -PB.hl - 0.6, v: -1.2, swing: 0, walk: 0 };
-    this.op = { u: PB.hl + 0.6, v: 1.2, swing: 0, walk: 0, name: OPPONENTS[Math.floor(Math.random() * OPPONENTS.length)] };
+    this.lineU = PB.hl - 0.3; // where the paddles slide, just inside the baselines
+    this.me = { u: -this.lineU, v: 0, vel: 0, swing: 0, walk: 0, smash: 0 };
+    this.op = { u: this.lineU, v: 0, vel: 0, swing: 0, walk: 0, aim: 0, name: OPPONENTS[Math.floor(Math.random() * OPPONENTS.length)] };
     this.score = [0, 0];
     this.server = 0; // 0 = you
     this.ball = null;
+    this.rallyN = 0;
+    this.best = 0;
     this.phase = 'serve';
     this.wait = 0.6;
     this.msg = '';
     const scene = game.scene;
     this.opMesh = makePerson(randomLook());
     scene.add(this.opMesh);
-    this.ballMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.075, 1), mat(0xe8e04a, { emissive: 0x3a3600 }));
+    this.ballMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.11, 1), mat(0xe8e04a, { emissive: 0x3a3600 }));
     scene.add(this.ballMesh);
-    this.shadow = new THREE.Mesh(new THREE.CircleGeometry(0.09, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }));
+    // A short fading trail so you can see how fast it's going
+    this.trail = [0.6, 0.4, 0.25, 0.12].map((o) => {
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(0.08, 1), new THREE.MeshBasicMaterial({ color: 0xf4ee7a, transparent: true, opacity: o, depthWrite: false }));
+      scene.add(m);
+      return m;
+    });
+    this.hist = [];
+    this.shadow = new THREE.Mesh(new THREE.CircleGeometry(0.1, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }));
     this.shadow.rotation.x = -Math.PI / 2;
     scene.add(this.shadow);
-    this.paddles = [game.player.mesh, this.opMesh].map((m) => {
+    this.paddles = [game.player.mesh, this.opMesh].map(() => {
       const p = new THREE.Mesh(GEOM.box, mat(0x1f3a6e));
       p.scale.set(0.2, 0.26, 0.03);
       scene.add(p);
@@ -255,34 +271,28 @@ export class Pickleball {
 
   updateHud() {
     const touch = this.game.input.isTouch;
-    const help = touch ? 'Stick moves · 📖 swing · ✋ quit' : 'WASD move · <b>Space</b> swing (hold A/D to aim, W to drive, S to dink) · <b>E</b> quit';
-    this.hud.innerHTML = `🏓 <b>You ${this.score[0]}</b> – ${this.score[1]} ${this.op.name}<br><span style="font-weight:400;font-size:13px">${this.msg || help}</span>`;
+    const help = touch ? 'Stick: slide side to side · 📖 serve / smash · ✋ quit' : '<b>A/D</b> slide side to side · <b>Space</b> serve (tap right before it hits you to smash) · <b>E</b> quit';
+    const b = this.ball;
+    const speed = b ? `Rally ${this.rallyN} · ${Math.round(b.speed * 2.237)} mph` : (this.best ? `Longest rally: ${this.best}` : '');
+    this.hud.innerHTML = `🏓 <b>You ${this.score[0]}</b> – ${this.score[1]} ${this.op.name}<br><span style="font-weight:400;font-size:13px">${this.msg || help}</span>` +
+      (speed ? `<br><span style="font-weight:600;font-size:13px;color:#ffd23f">${speed}</span>` : '');
   }
 
-  // A shot from (u0, v0, h0) landing at (u1, v1) after T seconds, clearing the net
-  launch(from, u1, v1, T, hitter) {
-    const g = 9.8;
-    let h0 = Math.max(0.5, from.h ?? 0.9);
-    for (let k = 0; k < 6; k++) {
-      const vu = (u1 - from.u) / T, vh = (0 - h0 + 0.5 * g * T * T) / T;
-      const tn = -from.u / vu;
-      const hn = h0 + vh * tn - 0.5 * g * tn * tn;
-      if (hn > PB.net + 0.15 || tn < 0 || tn > T) break;
-      T *= 1.12; // loft it more
-    }
-    this.ball = {
-      u: from.u, v: from.v, h: h0, vu: (u1 - from.u) / T, vv: (v1 - from.v) / T, vh: (0 - h0 + 0.5 * g * T * T) / T,
-      hitter, bounces: 0, side: Math.sign(from.u) || -1, landed: false,
-    };
-    this.game.audio.throw();
+  // Send the ball from paddle `who` (0 you, 1 them) at `speed`, `ang` radians off straight
+  send(who, v, speed, ang) {
+    const dir = who === 0 ? 1 : -1;
+    const u = who === 0 ? -this.lineU + 0.25 : this.lineU - 0.25;
+    this.ball = { u, v, u0: u, speed, vu: dir * speed * Math.cos(ang), vv: speed * Math.sin(ang), hitter: who, h: 0.9 };
+    this.hist.length = 0;
   }
 
   point(winner, why) {
     this.score[winner]++;
     this.server = winner;
+    this.best = Math.max(this.best, this.rallyN);
     this.msg = `${winner === 0 ? '✅ Your point' : `❌ ${this.op.name}'s point`}: ${why}`;
     this.phase = 'between';
-    this.wait = 1.6;
+    this.wait = 1.4;
     this.ball = null;
     if (winner === 0) this.game.audio.pickup(); else this.game.audio.bump();
     this.updateHud();
@@ -305,132 +315,116 @@ export class Pickleball {
     this.wait = 2.5;
   }
 
+  slide(who, target, maxSpeed, dt) {
+    const lim = PB.hw + 0.4;
+    const prev = who.v;
+    const d = clamp(target, -lim, lim) - who.v;
+    who.v += clamp(d, -maxSpeed * dt, maxSpeed * dt);
+    who.vel = (who.v - prev) / Math.max(dt, 1e-3);
+    who.walk += Math.abs(who.v - prev) * 3;
+  }
+
   update(dt) {
     const g = this.game, inp = g.input;
     if (inp.wasPressed('action')) { g.toast('🏓 You left the court. Good game!'); g.endPickleball(); return; }
     if (this.phase === 'done') { this.wait -= dt; if (this.wait <= 0) g.endPickleball(); this.draw(dt); return; }
-    // You: move around your half; camera-relative (right on screen is -v)
-    const sp = 4.2;
-    const mu = inp.forward * sp * dt, mv = -inp.turn * sp * dt;
-    this.me.u = clamp(this.me.u + mu, -PB.hl - 2.5, -0.35);
-    this.me.v = clamp(this.me.v + mv, -PB.hw - 1.5, PB.hw + 1.5);
-    this.me.walk += Math.hypot(mu, mv) * 3;
+    // You: slide along your baseline (right on screen is -v)
+    const prev = this.me.v;
+    this.me.v = clamp(this.me.v - inp.turn * ME_SPEED * dt, -PB.hw - 0.4, PB.hw + 0.4);
+    this.me.vel = (this.me.v - prev) / Math.max(dt, 1e-3);
+    this.me.walk += Math.abs(this.me.v - prev) * 3;
     this.me.swing = Math.max(0, this.me.swing - dt);
     this.op.swing = Math.max(0, this.op.swing - dt);
+    this.me.smash = Math.max(0, this.me.smash - dt);
+    if (inp.wasPressed('throw') && this.phase === 'rally') { this.me.smash = 0.3; this.me.swing = 0.25; }
 
     if (this.phase === 'serve' || this.phase === 'between') {
       this.wait -= dt;
       if (this.phase === 'between' && this.wait <= 0) { this.phase = 'serve'; this.wait = 0.8; this.msg = ''; this.updateHud(); }
-      // Servers stand behind the baseline, on the right if their score is even
-      const right = this.score[this.server] % 2 === 0 ? 1 : -1;
       if (this.server === 1) {
-        this.op.u = PB.hl + 0.4; this.op.v = -right * 1.5;
+        this.slide(this.op, 0, OP_SPEED, dt);
         if (this.phase === 'serve' && this.wait <= 0) {
           this.op.swing = 0.3;
-          this.launch({ u: this.op.u, v: this.op.v, h: 0.7 }, -PB.kitchen - 1 - Math.random() * 3, right * (0.5 + Math.random() * 2), 1.25, 1);
+          this.rallyN = 0;
+          this.send(1, this.op.v, START_SPEED, (Math.random() - 0.5) * 0.6);
+          this.game.audio.throw();
           this.phase = 'rally';
+          this.updateHud();
         }
       } else if (this.phase === 'serve') {
+        this.slide(this.op, 0, OP_SPEED, dt);
         if (!this.msg) { this.msg = 'Your serve: press Space (📖)'; this.updateHud(); }
         if (inp.wasPressed('throw') && this.wait <= 0) {
           this.me.swing = 0.3;
-          const aim = clamp(-inp.turn, -1, 1);
-          this.launch({ u: this.me.u, v: this.me.v, h: 0.7 }, PB.kitchen + 1 + Math.random() * 2.8, clamp(-Math.sign(this.me.v || 1) * 1.5 + aim * 1.2, -2.8, 2.8), 1.25, 0);
+          this.rallyN = 0;
+          this.send(0, this.me.v, START_SPEED, clamp(-this.me.vel * 0.05, -0.4, 0.4) + (Math.random() - 0.5) * 0.3);
+          this.game.audio.throw();
           this.phase = 'rally'; this.msg = ''; this.updateHud();
         }
       }
     }
 
-    if (this.phase === 'rally' && this.ball) this.rally(dt, inp);
+    if (this.phase === 'rally' && this.ball) this.rally(dt);
     this.draw(dt);
   }
 
-  rally(dt, inp) {
-    const b = this.ball, grav = 9.8;
-    const prevU = b.u;
-    b.u += b.vu * dt; b.v += b.vv * dt; b.vh -= grav * dt; b.h += b.vh * dt;
-    // The net
-    if (Math.sign(prevU) !== Math.sign(b.u) && prevU !== 0) {
-      if (b.h < PB.net && Math.abs(b.v) < PB.hw + 0.3) { this.point(1 - b.hitter, 'into the net'); return; }
-      b.side = Math.sign(b.u); b.bounces = 0;
-    }
-    // Bounces
-    if (b.h <= 0.04 && b.vh < 0) {
-      b.h = 0.04; b.vh = -b.vh * 0.6; b.vu *= 0.82; b.vv *= 0.82;
-      const side = Math.sign(b.u);
-      if (!b.landed) {
-        b.landed = true;
-        const hitterSide = b.hitter === 0 ? -1 : 1;
-        const inside = Math.abs(b.u) <= PB.hl && Math.abs(b.v) <= PB.hw;
-        if (side === hitterSide) { this.point(1 - b.hitter, 'didn\'t clear the net'); return; }
-        if (!inside) { this.point(1 - b.hitter, 'out'); return; }
+  rally(dt) {
+    const b = this.ball;
+    // Small steps so a fast ball can't skip past a paddle
+    const steps = Math.ceil((b.speed * dt) / 0.15);
+    const h = dt / steps;
+    for (let k = 0; k < steps && this.ball; k++) {
+      b.u += b.vu * h; b.v += b.vv * h;
+      // Sidelines are the walls
+      const wall = PB.hw - 0.05;
+      if (b.v > wall && b.vv > 0) { b.v = 2 * wall - b.v; b.vv = -b.vv; this.game.audio.tone(700, 0.04, 'square', 0.05); }
+      if (b.v < -wall && b.vv < 0) { b.v = -2 * wall - b.v; b.vv = -b.vv; this.game.audio.tone(700, 0.04, 'square', 0.05); }
+      // Your paddle
+      if (b.vu < 0 && b.u <= -this.lineU + 0.25 && b.u > -this.lineU - 0.6) {
+        const off = b.v - this.me.v;
+        if (Math.abs(off) <= REACH) { this.returnBall(0, off); continue; }
       }
-      b.bounces++;
-      if (b.bounces >= 2) { this.point(side < 0 ? 1 : 0, side < 0 ? 'it bounced twice on your side' : 'two bounces on their side'); return; }
-      this.game.audio.tone(900, 0.04, 'square', 0.05);
-    }
-    // Rolled away
-    if (Math.abs(b.u) > PB.hl + 6 || Math.abs(b.v) > PB.hw + 5) {
-      const side = Math.sign(b.u);
-      this.point(b.landed ? (side < 0 ? 1 : 0) : 1 - b.hitter, b.landed ? 'couldn\'t reach it' : 'out');
-      return;
-    }
-
-    // Your swing
-    if (inp.wasPressed('throw')) {
-      this.me.swing = 0.3;
-      const d = Math.hypot(b.u - this.me.u, b.v - this.me.v);
-      if (b.hitter === 1 && b.u < 0 && d < 1.7 && b.h < 2.4) {
-        const fwd = inp.forward, aim = clamp(-inp.turn, -1, 1);
-        let u1 = 4.2, T = 1.05;
-        if (fwd > 0.3) { u1 = 5.6; T = 0.8; this.msg = 'Drive!'; } else if (fwd < -0.3) { u1 = 1.4; T = 1.35; this.msg = 'Dink.'; } else this.msg = '';
-        const v1 = clamp(aim * 2.4 + (Math.random() - 0.5) * 0.8, -3.2, 3.2);
-        this.launch({ u: b.u, v: b.v, h: b.h }, u1 + (Math.random() - 0.5) * 0.8, v1, T, 0);
-        this.ball.drive = fwd > 0.3;
-        this.updateHud();
-        return;
+      // Their paddle
+      if (b.vu > 0 && b.u >= this.lineU - 0.25 && b.u < this.lineU + 0.6) {
+        const off = b.v - this.op.v;
+        if (Math.abs(off) <= REACH) { this.returnBall(1, off); continue; }
       }
+      if (b.u < -this.lineU - 1.4) { this.point(1, this.rallyN > 6 ? `it got past you at ${Math.round(b.speed * 2.237)} mph` : 'it got past you'); return; }
+      if (b.u > this.lineU + 1.4) { this.point(0, this.rallyN > 6 ? `${Math.round(b.speed * 2.237)} mph, too fast for them` : 'it got past them'); return; }
     }
-
-    // Opponent: run to where the ball will be after it bounces, then hit it back
-    if (b.hitter === 0 && b.u > 0) {
-      const t = this.predict(b);
-      this.moveOp(t.u + 0.4, t.v, dt);
-      const d = Math.hypot(b.u - this.op.u, b.v - this.op.v);
-      if (b.bounces === 1 && d < 1.35 && b.h < 2.2 && !b.opTried) {
-        b.opTried = true;
-        let p = 0.9;
-        if (b.drive) p -= 0.18;
-        if (Math.abs(b.v) > PB.hw - 0.6) p -= 0.12;
-        p -= Math.max(0, d - 0.9) * 0.3;
-        this.op.swing = 0.3;
-        if (Math.random() < p) {
-          const deep = Math.random() < 0.6;
-          const u1 = -(deep ? 4 + Math.random() * 2.3 : 1.5 + Math.random() * 1.5);
-          let v1 = (Math.random() - 0.5) * 5.4;
-          if (Math.random() < 0.08) v1 = Math.sign(v1 || 1) * (PB.hw + 0.4); // sprays it wide now and then
-          this.launch({ u: b.u, v: b.v, h: b.h }, u1, v1, deep ? 1.0 : 1.3, 1);
-        }
-      }
-    } else if (b.hitter === 1) this.moveOp(PB.hl - 1, 0, dt);
+    // Opponent: run to where the ball will cross their line (bouncing off the sidelines),
+    // missing by a bit more the faster it comes; drift back to the middle otherwise
+    if (b.vu > 0) {
+      const t = (this.lineU - b.u) / b.vu;
+      let v = b.v + b.vv * t;
+      const wall = PB.hw - 0.05, span = 4 * wall;
+      const m = (((v + wall) % span) + span) % span; // unfold the sideline bounces
+      v = (m > 2 * wall ? span - m : m) - wall;
+      this.slide(this.op, v + this.op.aim, OP_SPEED, dt);
+    } else this.slide(this.op, b.v * 0.3, OP_SPEED * 0.6, dt);
+    // Cosmetic height: one bounce on the receiver's side, over the net
+    const f = clamp(Math.abs(b.u - b.u0) / (2 * this.lineU - 0.5), 0, 1);
+    if (f < 0.72) { const s = f / 0.72; b.h = 0.9 * (1 - s) + 0.05 * s + 1.0 * 4 * s * (1 - s); } else b.h = 0.05 + 0.85 * Math.sin(((f - 0.72) / 0.28) * Math.PI / 2);
+    if (f >= 0.72 && !b.bounced) { b.bounced = true; this.game.audio.tone(900, 0.04, 'square', 0.05); }
   }
 
-  // Where the ball will be just after its first bounce on the far side (about waist high)
-  predict(b) {
-    let { u, v, h, vu, vv, vh } = b, bounced = b.bounces > 0;
-    for (let i = 0; i < 200; i++) {
-      const dt = 0.02;
-      u += vu * dt; v += vv * dt; vh -= 9.8 * dt; h += vh * dt;
-      if (h <= 0.04 && vh < 0) { if (bounced) break; bounced = true; vh = -vh * 0.6; vu *= 0.82; vv *= 0.82; }
-      if (bounced && vh < 0 && h < 0.9) break;
-    }
-    return { u: clamp(u, 0.6, PB.hl + 2.5), v: clamp(v, -PB.hw - 1.5, PB.hw + 1.5) };
-  }
-
-  moveOp(u, v, dt) {
-    const du = u - this.op.u, dv = v - this.op.v, d = Math.hypot(du, dv);
-    const step = Math.min(d, 4.6 * dt);
-    if (d > 1e-3) { this.op.u += (du / d) * step; this.op.v += (dv / d) * step; this.op.walk += step * 3; }
+  // Paddle `who` returns the ball; `off` is where on the paddle it hit (-REACH..REACH)
+  returnBall(who, off) {
+    const b = this.ball, p = who === 0 ? this.me : this.op;
+    let speed = Math.min(MAX_SPEED, b.speed * SPEEDUP);
+    let smash = false;
+    if (who === 0 && this.me.smash > 0) { speed = Math.min(MAX_SPEED, speed * 1.18); smash = true; }
+    // Off the edge of the paddle sends it out at a steep angle; moving adds a bit of spin
+    let ang = (off / REACH) * 0.9 + clamp(p.vel * 0.03, -0.25, 0.25);
+    ang = clamp(ang, -1.05, 1.05);
+    p.swing = 0.3;
+    this.rallyN++;
+    this.send(who, b.v, speed, ang);
+    // The opponent's next aim error grows with the speed of the ball
+    this.op.aim = (Math.random() - 0.5) * 2 * (0.15 + Math.max(0, speed - 8) * 0.075);
+    this.msg = smash ? '💥 Smash!' : '';
+    this.game.audio.tone(who === 0 ? 520 : 440, 0.05, 'square', 0.12);
+    this.updateHud();
   }
 
   draw(dt) {
@@ -457,20 +451,29 @@ export class Pickleball {
       this.ballMesh.position.set(x, y, z);
       const [sx, sy, sz] = this.W(b.u, b.v, 0.06);
       this.shadow.position.set(sx, sy, sz);
+      this.hist.unshift([x, y, z]);
+      if (this.hist.length > 12) this.hist.length = 12;
     }
+    // The trail stretches out as the ball speeds up
+    this.trail.forEach((m, i) => {
+      const p = this.hist[(i + 1) * 2];
+      m.visible = !!(b && p && b.speed > 9);
+      if (m.visible) m.position.set(...p);
+    });
     // Camera behind you, looking down the court
     const cam = this.game.camera;
     // (kept inside the fence so the chain-link isn't in the way)
+    // High enough to see the whole court, like a Pong screen tipped back
     const camU = Math.max(this.me.u - 4.5, -(this.court.fenceU ?? 12) + 0.6);
-    const [cx, cy, cz] = this.W(camU, this.me.v * 0.6, 4.6);
+    const [cx, cy, cz] = this.W(camU, this.me.v * 0.25, 8.5);
     cam.position.lerp(new THREE.Vector3(cx, cy, cz), Math.min(1, dt * 5));
-    const [lx, ly, lz] = this.W(2.5, this.me.v * 0.3, 0.4);
+    const [lx, ly, lz] = this.W(-0.2, this.me.v * 0.1, 0);
     cam.lookAt(lx, ly, lz);
   }
 
   dispose() {
     const scene = this.game.scene;
-    for (const m of [this.opMesh, this.ballMesh, this.shadow, ...this.paddles]) scene.remove(m);
+    for (const m of [this.opMesh, this.ballMesh, this.shadow, ...this.paddles, ...this.trail]) scene.remove(m);
     this.hud.remove();
   }
 }

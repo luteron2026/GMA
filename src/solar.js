@@ -48,8 +48,8 @@ function panelTexture() {
   return panelTex;
 }
 
-// The real solar carports: the North Campus lot, and the lots in front of C.W. Smith and
-// Waldock (the dorm lots on either side of that row)
+// The real solar carports: the North Campus lot, the lot west of C.W. Smith, and the dorm
+// lot east of Slight (the rows along the dorm drive in front of C.W. Smith and Waldock have none)
 const SOLAR_LOTS = ['northLot', 'smithLot', 'dormLot'];
 
 export function buildSolarCarports(world, boxes) {

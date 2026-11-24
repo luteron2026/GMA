@@ -9,6 +9,8 @@ import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeigh
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 import { buildSolarCarports } from './solar.js';
 import { planCourts, buildCourts } from './sports.js';
+import { planDixonFireplace, DixonFireplace } from './fireplace.js';
+import { buildTrophyCoffee } from './trophy.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -60,6 +62,7 @@ export class World {
     this.walkways = walks.walks;
     this.plazas = walks.pads;
     this.planTrophy();
+    this.fireSpot = planDixonFireplace(this); // the outdoor fireplace in Dixon's courtyard
     this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
     this.planVehicleSpots();
     this.planBackyardPools();
@@ -84,6 +87,7 @@ export class World {
     buildSolarCarports(this, extra);
     buildCourts(this, extra);
     this.buildTrophy(extra);
+    if (this.fireSpot) this.fireplace = new DixonFireplace(this, this.fireSpot, extra);
     this.buildBackyardPools();
     extra.flush(this.scene, !this.lowSpec);
     this.buildLaneHints();
@@ -470,58 +474,9 @@ export class World {
   buildTrophy(boxes) {
     const t = this.trophy;
     if (!t) return;
-    const { P, tx, ty, nx, ny } = t;
-    const wallA = Math.atan2(ty, tx), face = Math.atan2(nx, -ny);
+    const { P } = t;
     const g = heightAtCampus(...P(0, 1));
-    const shadows = !this.lowSpec;
-    // Glass storefront with a black frame, and a door in the middle
-    const [sx, sy] = P(0, 0.1);
-    boxes.add(0x22303c, sx, g + 1.45, -sy, 7.2, 2.7, 0.12, wallA);
-    for (const a of [-3.6, -1.8, 0, 1.8, 3.6]) { const [fx, fy] = P(a, 0.16); boxes.add(0x151515, fx, g + 1.45, -fy, 0.12, 2.75, 0.08, wallA); }
-    { const [fx, fy] = P(0, 0.16); boxes.add(0x151515, fx, g + 2.82, -fy, 7.4, 0.12, 0.08, wallA); }
-    { const [dx, dy] = P(0, 0.2); boxes.add(0x2b1d14, dx, g + 1.15, -dy, 1.1, 2.3, 0.08, wallA); boxes.add(0xc9a227, dx + tx * 0.4, g + 1.1, -(dy + ty * 0.4), 0.05, 0.4, 0.12, wallA); }
-    // Black awning with a gold edge
-    { const [ax, ay] = P(0, 0.9); boxes.add(0x1c1c1c, ax, g + 3.15, -ay, 8, 0.12, 1.8, wallA, 0, -0.2); const [ex, ey] = P(0, 1.78); boxes.add(0xc9a227, ex, g + 2.98, -ey, 8, 0.22, 0.06, wallA); }
-    // Sign over the awning
-    const c = document.createElement('canvas');
-    c.width = 1024; c.height = 220;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = '#141414'; ctx.fillRect(0, 0, 1024, 220);
-    ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 8; ctx.strokeRect(8, 8, 1008, 204);
-    // A little trophy cup
-    ctx.fillStyle = '#d9b23a';
-    ctx.beginPath(); ctx.moveTo(70, 50); ctx.lineTo(170, 50); ctx.quadraticCurveTo(165, 135, 120, 140); ctx.quadraticCurveTo(75, 135, 70, 50); ctx.fill();
-    ctx.fillRect(112, 138, 16, 30); ctx.fillRect(88, 166, 64, 14);
-    ctx.lineWidth = 9; ctx.strokeStyle = '#d9b23a';
-    ctx.beginPath(); ctx.arc(70, 80, 22, Math.PI * 0.5, Math.PI * 1.5); ctx.stroke();
-    ctx.beginPath(); ctx.arc(170, 80, 22, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
-    ctx.fillStyle = '#f2e6c8'; ctx.font = 'bold 108px Georgia, "Times New Roman", serif'; ctx.textBaseline = 'middle';
-    ctx.fillText('TROPHY COFFEE', 215, 118, 780);
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.07), new THREE.MeshLambertMaterial({ map: tex, emissive: 0x111111 }));
-    const [gx, gy] = P(0, 0.14);
-    sign.position.set(gx, g + 3.9, -gy); sign.rotation.y = face;
-    this.scene.add(sign);
-    // Patio: round tables with chairs and black-and-gold umbrellas
-    const top = mat(0x2b2b2b);
-    for (const [a, o, color] of [[-4, 3, 0x1c1c1c], [0, 4.2, 0xc9a227], [4, 3, 0x1c1c1c]]) {
-      const [x, y] = P(a, o), gt = heightAtCampus(x, y);
-      const tbl = new THREE.Mesh(GEOM.cyl, top); tbl.scale.set(1.0, 0.06, 1.0); tbl.position.set(x, gt + 0.75, -y); this.scene.add(tbl);
-      boxes.add(0x2b2b2b, x, gt + 0.37, -y, 0.08, 0.75, 0.08, 0);
-      for (const k of [0, 1, 2]) {
-        const an = (k / 3) * Math.PI * 2 + a;
-        const cx = x + Math.cos(an) * 0.85, cy = y + Math.sin(an) * 0.85;
-        boxes.add(0x3a3a3a, cx, gt + 0.45, -cy, 0.42, 0.05, 0.42, an);
-        boxes.add(0x3a3a3a, cx + Math.cos(an) * 0.2, gt + 0.7, -(cy + Math.sin(an) * 0.2), 0.05, 0.5, 0.42, an);
-      }
-      boxes.add(0x6b6b6b, x, gt + 1.3, -y, 0.05, 1.1, 0.05, 0);
-      const um = new THREE.Mesh(GEOM.cone8, mat(color)); um.scale.set(2.4, 0.5, 2.4); um.position.set(x, gt + 2.05, -y); um.castShadow = shadows;
-      this.scene.add(um);
-      this.colliders.addCircle(x, -y, 0.55, 'table', gt + 2.3);
-    }
-    // Chalkboard A-frame menu by the door
-    { const [mx, my] = P(2.2, 1.3), gm = heightAtCampus(mx, my); boxes.add(0x1f2a24, mx, gm + 0.5, -my, 0.6, 0.95, 0.06, wallA, 0, 0.18); boxes.add(0x6b4f33, mx, gm + 0.5, -my, 0.66, 1.0, 0.03, wallA, 0, 0.18); }
+    buildTrophyCoffee(this, boxes);
     const lbl = makeLabel('Trophy Coffee', 'Coffee · Pastries', { width: 10 });
     const [lx, ly] = P(0, 3);
     lbl.position.set(lx, g + 6, -ly);
@@ -1307,7 +1262,9 @@ export class World {
     return x > b.minX + m && x < b.maxX - m && z > b.minZ + m && z < b.maxZ - m;
   }
 
-  update() {}
+  update(dt, t) {
+    if (this.fireplace) this.fireplace.update(dt, t);
+  }
 }
 
 // ---------- geometry helpers ----------

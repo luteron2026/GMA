@@ -485,6 +485,11 @@ export class Game {
     if (!p.vehicle && tc && Math.hypot(tc[0] - p.x, tc[1] - p.z) < 4) {
       return { text: '☕ Order a cold brew at <b>Trophy Coffee</b> (5 Chapel Credits)', fn: () => this.buyCoffee() };
     }
+    // The Dixon fireplace
+    const fp = this.world.places.dixonFire;
+    if (!p.vehicle && fp && Math.hypot(fp[0] - p.x, fp[1] - p.z) < 3.5) {
+      return { text: '🔥 Warm up at the <b>Dixon fireplace</b>', fn: () => this.warmUp() };
+    }
     // Pickleball: walk onto the courts at West Campus
     const cb = this.world.courts && this.world.courts.block;
     if (!p.vehicle && cb && !this.missions.active && pointInPoly(p.x, -p.z, cb.outline)) {
@@ -552,6 +557,16 @@ export class Game {
     this.addCredits(-5);
     this.player.joy = 100;
     const lines = ['☕ Cold brew acquired. Joy fully restored. Theology now 20% easier to read.', '☕ An oat milk latte with a little cross in the foam. Joy restored.', '☕ "Name for the order?" You said your name. They spelled it wrong. Joy restored anyway.'];
+    this.toast(lines[Math.floor(Math.random() * lines.length)]);
+    this.audio.pickup();
+  }
+
+  warmUp() {
+    this.player.joy = Math.min(100, (this.player.joy ?? 0) + 40);
+    const lines = ['🔥 You pull up an Adirondack chair. Someone hands you a s\'more. Joy +40.',
+      '🔥 A Dixon guy is explaining supralapsarianism by the fire. You nod thoughtfully. Joy +40.',
+      '🔥 Somebody brought a guitar. It\'s "In Christ Alone" again. Nobody minds. Joy +40.',
+      '🔥 You warm your hands. A marshmallow catches fire. You blow it out like a pro. Joy +40.'];
     this.toast(lines[Math.floor(Math.random() * lines.length)]);
     this.audio.pickup();
   }
