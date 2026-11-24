@@ -2,6 +2,7 @@
 // each row of stalls, high enough to drive and park under.
 import * as THREE from 'three';
 import { heightAtCampus } from './terrain.js';
+import { pointInPoly } from './physics.js';
 import { STALL_W, STALL_L, obbOverlap } from './surfaces.js';
 
 const FRONT_H = 4.3, BACK_H = 3.5; // canopy underside over the aisle end and the back end
@@ -47,7 +48,14 @@ function panelTexture() {
   return panelTex;
 }
 
+// The real solar carports: the North Campus lot, and the lots in front of C.W. Smith and
+// Waldock (the dorm lots on either side of that row)
+const SOLAR_LOTS = ['northLot', 'smithLot', 'dormLot'];
+
 export function buildSolarCarports(world, boxes) {
+  const lots = SOLAR_LOTS.map((k) => world.places[k]).filter(Boolean)
+    .map(([x, z]) => world.lots.find((l) => pointInPoly(x, z, l.wpts))).filter(Boolean);
+  const inSolarLot = (x, y) => lots.some((l) => pointInPoly(x, -y, l.wpts));
   // Straight rows get long canopies; stalls fanned around a curve get one panel each,
   // which line up into a curved canopy
   const rows = [], singles = [];
@@ -56,7 +64,9 @@ export function buildSolarCarports(world, boxes) {
     else singles.push(...r);
   }
   // Only stalls that are part of a curved run (two neighbors close by), not strays at row ends
+  for (let i = rows.length - 1; i >= 0; i--) if (!inSolarLot(rows[i][0][0], rows[i][0][1])) rows.splice(i, 1);
   for (const st of singles) {
+    if (!inSolarLot(st[0], st[1])) continue;
     const near = singles.filter((o) => o !== st && Math.hypot(o[0] - st[0], o[1] - st[1]) < 4.2).length;
     if (near >= 2) rows.push([st]);
   }

@@ -635,12 +635,13 @@ export class World {
       Math.abs(heightAtCampus(x + 4, y) - heightAtCampus(x - 4, y)) < 0.8 && Math.abs(heightAtCampus(x, y + 4) - heightAtCampus(x, y - 4)) < 0.8);
     // Facing the nearest street, like it's guarding the place
     this.places.tankSpot = [tank[0], -tank[1], Math.PI * 0.85];
-    // Forklift: parked beside the Trophy Coffee patio, forks toward the wall
+    // Forklift: beside the Trophy Coffee patio, parked along the wall. This is only the
+    // preferred spot; the game moves it to where it really fits once fences and tables exist
+    // (see openVehicleSpot)
     if (this.trophy) {
       const t = this.trophy;
-      const [fx, fy] = t.P(-9.5, 3.5);
-      const spot = spiral(fx, fy, 20, (x, y) => !nearBuilding(x, y, 2) && !this.pavedAt(x, y, 0.5) && !CAMPUS.roads.some((r) => r.kind !== 'trail' && distToPolyline(x, y, r.pts) < r.width / 2 + 2));
-      this.places.forkliftSpot = [spot[0], -spot[1], Math.atan2(-t.nx, t.ny)];
+      const [fx, fy] = t.P(-8.5, 3.5);
+      this.places.forkliftSpot = [fx, -fy, Math.atan2(t.tx, -t.ty)];
     }
   }
 
@@ -1240,6 +1241,25 @@ export class World {
       return [x, z];
     }
     return near ? [...near] : [...this.places.spawn];
+  }
+
+  // The nearest spot to (x, z) where a vehicle of this size fits without touching any
+  // collider (fence, wall, table, tree) or standing on a road. World [x, z].
+  openVehicleSpot(x, z, heading, spec, maxR = 25) {
+    const fx = Math.sin(heading), fz = Math.cos(heading);
+    const off = Math.max(0, spec.length / 2 - spec.width / 2), r = spec.width * 0.55 + 0.4;
+    const fits = (px, pz) => [-off, 0, off].every((o) => {
+      const cx = px + fx * o, cz = pz + fz * o;
+      return !this.colliders.resolve(cx, cz, r).hit && !this.onRoad(cx, cz) && this.inBounds(cx, cz, 4);
+    });
+    for (let rad = 0; rad <= maxR; rad += 0.75) {
+      const n = Math.max(1, Math.round(rad * 3));
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2, px = x + Math.cos(a) * rad, pz = z + Math.sin(a) * rad;
+        if (fits(px, pz)) return [px, pz];
+      }
+    }
+    return [x, z];
   }
 
   // Highest thing to stand or land on at a world point: the ground or a building's roof
