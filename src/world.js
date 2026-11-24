@@ -1003,13 +1003,29 @@ export class World {
     ptr.castShadow = pfr.castShadow = shadow;
     this.scene.add(ptr, pfr);
 
-    // Conifers (pines, cedars, cypress): narrow cones
-    const cone = new THREE.ConeGeometry(1, 1, 7).translate(0, 0.5, 0);
+    // Conifers (pines, cedars, cypress): a real trunk under stacked tiers of boughs that get
+    // narrower toward the top, each a slightly different green, so they read as pines rather
+    // than one smooth cone on a stick
+    const TIERS = 4;
+    const cone = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
     const ctr = new THREE.InstancedMesh(trunkGeo, mat(0x5a4330), conifers.length);
-    const cco = new THREE.InstancedMesh(cone, fadeNearCamera(new THREE.MeshLambertMaterial({ color: 0x35583a, flatShading: true })), conifers.length);
+    const cco = new THREE.InstancedMesh(cone, fadeNearCamera(new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true })), conifers.length * TIERS);
+    const pine = [new THREE.Color(0x2f5534), new THREE.Color(0x3a6038), new THREE.Color(0x2c4f3a)];
     conifers.forEach((t, i) => {
-      m4.compose(v.set(t.x, t.g - 0.2, t.z), q.identity(), sc.set(0.25, t.cb + 1.2, 0.25)); ctr.setMatrixAt(i, m4);
-      m4.compose(v.set(t.cx, t.g + t.cb, t.cz), q.setFromAxisAngle(up, t.rot), sc.set(t.r, t.h - t.cb, t.r)); cco.setMatrixAt(i, m4);
+      const base = Math.min(Math.max(2.2, t.cb), t.h * 0.3); // boughs start low on a pine
+      const r = Math.min(t.r, t.h * 0.22 + 0.5);
+      const crown = t.h - base;
+      m4.compose(v.set(t.x, t.g - 0.2, t.z), q.identity(), sc.set(0.2 + t.h * 0.012, base + crown * 0.6, 0.2 + t.h * 0.012)); ctr.setMatrixAt(i, m4);
+      for (let k = 0; k < TIERS; k++) {
+        const f = k / TIERS;
+        const y0 = base + crown * f * 0.8, th = crown * (k === TIERS - 1 ? 0.36 : 0.34);
+        q.setFromAxisAngle(up, t.rot + k * 0.7);
+        const tr = r * (1 - f * 0.62);
+        m4.compose(v.set(t.x + (t.cx - t.x) * f, t.g + y0, t.z + (t.cz - t.z) * f), q, sc.set(tr, th, tr));
+        cco.setMatrixAt(i * TIERS + k, m4);
+        col.copy(pine[Math.floor(t.c * pine.length)]).multiplyScalar(0.9 + t.c * 0.15 + k * 0.05);
+        cco.setColorAt(i * TIERS + k, col);
+      }
     });
     ctr.castShadow = cco.castShadow = shadow;
     this.scene.add(ctr, cco);

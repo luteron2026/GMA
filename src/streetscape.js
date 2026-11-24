@@ -434,9 +434,12 @@ export function buildStreetscape(world) {
   // The fence opens up in front of Trophy Coffee so its patio meets the street
   const patio = world.trophy && world.trophy.patio;
   const byPatio = (x, y) => patio && (pointInPoly(x, y, patio) || distToPolyline(x, y, patio, true) < 5);
+  // ...and wherever a walk crosses it on its way from the street to a building
+  const onWalk = (s) => (world.walkways || []).some((w) => [0, 0.5, 1].some((t) =>
+    distToPolyline(s.x0 + (s.x1 - s.x0) * t, s.y0 + (s.y1 - s.y0) * t, w.pts) < w.width / 2 + 0.4));
   for (const f of plan.fences) {
     for (const s of f.segs) {
-      if (byPatio((s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2)) continue;
+      if (byPatio((s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2) || onWalk(s)) continue;
       const L = Math.hypot(s.x1 - s.x0, s.y1 - s.y0);
       const tx = (s.x1 - s.x0) / L, ty = (s.y1 - s.y0) / L, a = ang(tx, ty);
       const g0 = G(s.x0, s.y0), g1 = G(s.x1, s.y1), tilt = Math.atan2(g1 - g0, L);

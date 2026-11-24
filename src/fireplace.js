@@ -18,7 +18,7 @@ export function planDixonFireplace(world) {
   const roads = world.data.roads.filter((r) => r.kind !== 'trail' && r.kind !== 'path');
   const nearWall = (x, y, r) => world.buildings.some((b) => pointInPoly(x, y, b.poly) || b.poly.some((p, i) => distToPolyline(x, y, [p, b.poly[(i + 1) % b.poly.length]]) < r));
   let best = null;
-  for (let rad = 11; rad <= 18; rad += 1) {
+  for (let rad = 8; rad <= 18; rad += 0.5) {
     for (let k = 0; k < 36; k++) {
       const a = (k / 36) * Math.PI * 2;
       const x = cx + Math.cos(a) * rad, y = cy + Math.sin(a) * rad;
@@ -33,10 +33,10 @@ export function planDixonFireplace(world) {
       if (probe.some(([px, py]) => !world.inCampus(px, -py))) continue;
       const hs = probe.map(([px, py]) => heightAtCampus(px, py));
       const slope = Math.max(...hs) - Math.min(...hs);
-      if (slope > 1.2) continue;
-      // Close to Dixon, close to the fountain, and flat
+      if (slope > 2.4) continue; // the plaza sits on a gentle hillside; each piece follows the ground
+      // Right on the fountain plaza (where people actually gather), near Dixon, and flat
       const dWall = Math.min(...dixon.poly.map((p, i) => distToPolyline(x, y, [p, dixon.poly[(i + 1) % dixon.poly.length]])));
-      const score = dWall * 0.6 + rad * 0.4 + slope * 6;
+      const score = dWall * 0.25 + rad * 1.2 + slope * 2;
       if (!best || score < best.score) best = { score, x, y, tx, ty, nx, ny, P, pad };
     }
   }
