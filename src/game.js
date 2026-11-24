@@ -157,21 +157,28 @@ export class Game {
       this.spawnVehicle('forklift', x, z, f[2]);
     }
     // Traffic on the real streets, carts on the campus service roads
+    // Lanes share their end points at junctions, so step along a lane until the spot is
+    // clear of the vehicles already placed (no two cars spawning inside each other)
+    const clearIdx = (lane, idx) => {
+      for (let k = idx; k < lane.pts.length - 1; k++) {
+        const [x, z] = lane.pts[k];
+        if (!this.vehicles.some((q) => Math.hypot(q.x - x, q.z - z) < 9)) return k;
+      }
+      return idx;
+    };
+    const addTraffic = (type, lane, idx0) => {
+      const idx = clearIdx(lane, idx0);
+      const v = this.spawnVehicle(type, 0, 0, 0);
+      v.setAI(lane, idx);
+      v.homeLane = { lane, idx };
+    };
     const carLanes = w.lanes.filter((l) => l.kind === 'car' && l.length > 150);
     for (const lane of carLanes) {
       const n = lane.length > 450 && !this.lowSpec ? 2 : 1;
-      for (let i = 0; i < n; i++) {
-        const v = this.spawnVehicle(['sedan', 'truck', 'sedan', 'van'][Math.floor(rng() * 4)], 0, 0, 0);
-        v.setAI(lane, Math.floor((i / n) * (lane.pts.length - 1)));
-        v.homeLane = { lane, idx: Math.floor((i / n) * (lane.pts.length - 1)) };
-      }
+      for (let i = 0; i < n; i++) addTraffic(['sedan', 'truck', 'sedan', 'van'][Math.floor(rng() * 4)], lane, Math.floor((i / n) * (lane.pts.length - 1)));
     }
     const cartLanes = w.lanes.filter((l) => l.kind === 'cart').sort((a, b) => b.length - a.length);
-    for (const lane of cartLanes.slice(0, this.lowSpec ? 3 : 6)) {
-      const v = this.spawnVehicle('cart', 0, 0, 0);
-      v.setAI(lane, 0);
-      v.homeLane = { lane, idx: 0 };
-    }
+    for (const lane of cartLanes.slice(0, this.lowSpec ? 3 : 6)) addTraffic('cart', lane, 0);
     // Pedestrians around campus hot spots
     const spots = ['grill', 'library', 'reece', 'chapelDoor', 'waldock', 'smith', 'hotchkiss', 'dixon', 'slight', 'sweazy', 'quad', 'stadium',
       'gym', 'king', 'biblical', 'music', 'education', 'herwaldtLawn', 'northLawn', 'placeritos', 'westLot', 'eastLot', 'trophy'];
@@ -191,6 +198,20 @@ export class Game {
     return v;
   }
 
+  // A spot near (x, z) where a vehicle of this type fits: clear of walls, fences, trees,
+  // roads, other vehicles and the player
+  freeVehicleSpot(type, x, z, heading) {
+    const spec = VEHICLE_TYPES[type], p = this.player;
+    return this.world.openVehicleSpot(x, z, heading, spec, 25, (px, pz) =>
+      Math.hypot(p.x - px, p.z - pz) > spec.length / 2 + 1.5 &&
+      !this.vehicles.some((v) => Math.hypot(v.x - px, v.z - pz) < (v.spec.length + spec.length) / 2 + 0.5));
+  }
+
+  removeVehicle(v) {
+    v.dispose();
+    this.vehicles = this.vehicles.filter((q) => q !== v);
+  }
+
   // Put every vehicle back where it started: parked ones in their spots, traffic back on
   // its roads with drivers, the tank, chopper and forklift on their pads
   resetVehicles() {
@@ -208,8 +229,10 @@ export class Game {
         this.player.teleport(r.x, r.z, this.player.heading);
       }
     }
-    // Vehicles brought back from a save (not part of the starting lineup) go away
-    for (const v of this.vehicles.filter((q) => q.fromSave)) { v.dispose(); this.vehicles.splice(this.vehicles.indexOf(v), 1); }
+    // Vehicles brought back from a save or left over from a mission (not part of the starting
+    // lineup) go away; the current mission keeps the ones it handed out
+    const keep = this.missions.active ? this.missions.active.vehicles : [];
+    for (const v of this.vehicles.filter((q) => q.fromSave || (q.missionSpawned && !keep.includes(q)))) this.removeVehicle(v);
     for (const v of this.vehicles) {
       v.speed = 0; v.steer = 0; v.climb = 0; v.alt = 0; v.y = undefined; v.fireT = 0; v.forksUp = false;
       if (v.homeLane) v.setAI(v.homeLane.lane, v.homeLane.idx);

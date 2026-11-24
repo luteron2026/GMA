@@ -631,7 +631,8 @@ export class World {
     this.places.helipad = [pad[0], -pad[1], ang];
     // Tank: open lawn at North Campus, off the walks and clear of the buildings
     const [nx, ny] = W(this.places.northLawn);
-    const tank = spiral(nx, ny, 60, (x, y) => !this.pavedAt(x, y, 2.5) && !nearBuilding(x, y, 6) &&
+    // (not on the lawn's own spot: a mission pickup and the students hanging out are there)
+    const tank = spiral(nx, ny, 60, (x, y) => Math.hypot(x - nx, y - ny) > 9 && !this.pavedAt(x, y, 2.5) && !nearBuilding(x, y, 6) &&
       Math.abs(heightAtCampus(x + 4, y) - heightAtCampus(x - 4, y)) < 0.8 && Math.abs(heightAtCampus(x, y + 4) - heightAtCampus(x, y - 4)) < 0.8);
     // Facing the nearest street, like it's guarding the place
     this.places.tankSpot = [tank[0], -tank[1], Math.PI * 0.85];
@@ -1165,15 +1166,32 @@ export class World {
         if (run.length >= 2 && length > 40) this.lanes.push({ pts: densify(run, 20), kind, name, length, loop: false });
       }
     };
+    const streets = this.roads.filter((r) => r.traffic);
     for (const r of this.roads) {
       if (r.traffic && r.lanes === 2) {
         add(offsetPath(r.wpts, 3.1), 'car', r.name);
         add(offsetPath([...r.wpts].reverse(), 3.1), 'car', r.name);
       } else if (r.cart) {
-        add(offsetPath(r.wpts, 1.5), 'cart');
-        add(offsetPath([...r.wpts].reverse(), 1.5), 'cart');
+        // Service roads start on a street's center line; carts keep to campus and turn
+        // around at the curb instead of ending their route in the middle of the street
+        const pts = trimEnds(r.wpts, (p) => streets.every((s) => distToPolyline(p[0], p[1], s.wpts) > s.width / 2 + 2));
+        if (pts.length < 2) continue;
+        add(offsetPath(pts, 1.5), 'cart');
+        add(offsetPath([...pts].reverse(), 1.5), 'cart');
       }
     }
+  }
+
+  // The lane an AI vehicle at the end of `lane` can U-turn onto: the same road the other way
+  reverseLane(lane, x, z, fx, fz) {
+    let best = null, bd = 14;
+    for (const l of this.lanes) {
+      if (l === lane || l.kind !== lane.kind || l.loop) continue;
+      const [ax, az] = l.pts[0], [bx, bz] = l.pts[1];
+      const d = Math.hypot(ax - x, az - z);
+      if (d < bd && (bx - ax) * fx + (bz - az) * fz < 0) { bd = d; best = l; }
+    }
+    return best;
   }
 
   // Split a world polyline into the runs that lie inside the play area
@@ -1245,10 +1263,10 @@ export class World {
 
   // The nearest spot to (x, z) where a vehicle of this size fits without touching any
   // collider (fence, wall, table, tree) or standing on a road. World [x, z].
-  openVehicleSpot(x, z, heading, spec, maxR = 25) {
+  openVehicleSpot(x, z, heading, spec, maxR = 25, extraOk = null) {
     const fx = Math.sin(heading), fz = Math.cos(heading);
     const off = Math.max(0, spec.length / 2 - spec.width / 2), r = spec.width * 0.55 + 0.4;
-    const fits = (px, pz) => [-off, 0, off].every((o) => {
+    const fits = (px, pz) => (!extraOk || extraOk(px, pz)) && [-off, 0, off].every((o) => {
       const cx = px + fx * o, cz = pz + fz * o;
       return !this.colliders.resolve(cx, cz, r).hit && !this.onRoad(cx, cz) && this.inBounds(cx, cz, 4);
     });
@@ -1410,6 +1428,31 @@ class Batcher {
     }
     return out;
   }
+}
+
+// Cut both ends of a polyline back (in 1 m steps) to where `keep` first holds, keeping
+// the original corners in between. Returns [] if no part of it passes.
+function trimEnds(pts, keep) {
+  const segs = [];
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const L = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    segs.push({ a: pts[i - 1], b: pts[i], s0: total, L });
+    total += L;
+  }
+  const at = (s) => {
+    const g = segs.find((q) => s <= q.s0 + q.L) || segs[segs.length - 1];
+    const t = g.L ? Math.min(1, Math.max(0, (s - g.s0) / g.L)) : 0;
+    return [g.a[0] + (g.b[0] - g.a[0]) * t, g.a[1] + (g.b[1] - g.a[1]) * t];
+  };
+  let s0 = 0, s1 = total;
+  while (s0 <= total && !keep(at(s0))) s0 += 1;
+  while (s1 >= s0 && !keep(at(s1))) s1 -= 1;
+  if (s1 - s0 < 1) return [];
+  const out = [at(s0)];
+  for (const g of segs) if (g.s0 > s0 && g.s0 < s1) out.push(g.a);
+  out.push(at(s1));
+  return out;
 }
 
 // Add points so no segment is longer than `step` (smoother AI steering on long straights)

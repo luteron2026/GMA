@@ -208,19 +208,23 @@ export class Vehicle {
     const pts = ai.lane.pts;
     const n = pts.length;
     let tgt = pts[ai.idx];
+    // Stuck behind something that isn't moving (a car the player left in the road, say):
+    // once nobody is looking, start over somewhere else
+    ai.stuckT = Math.abs(this.speed) < 0.5 ? (ai.stuckT || 0) + dt : 0;
+    if (ai.stuckT > 10 && this.respawnOutOfSight()) return [0, 0];
     if (Math.hypot(tgt[0] - this.x, tgt[1] - this.z) < 7) {
       ai.idx++;
       if (ai.idx >= n) {
         if (ai.lane.loop) ai.idx = 0;
         else {
-          // Reached the end of an open road: reappear at the start if nobody is watching
-          const st = pts[0];
-          const p = this.game.player;
-          if (Math.hypot(p.x - st[0], p.z - st[1]) > 80 && Math.hypot(p.x - this.x, p.z - this.z) > 60) {
-            this.x = st[0]; this.z = st[1]; ai.idx = 1;
-            this.heading = Math.atan2(pts[1][0] - st[0], pts[1][1] - st[1]);
-            this.speed = 0;
-          } else { ai.idx = n - 1; return [-1, 0]; }
+          // Reached the end of an open road: reappear at a start if nobody is watching,
+          // otherwise U-turn onto the other side of the road, or else pull up and wait
+          // (never shuffle back and forth on the spot)
+          if (this.respawnOutOfSight()) return [0, 0];
+          const back = this.game.world.reverseLane(ai.lane, this.x, this.z, this.fx, this.fz);
+          if (back) { ai.lane = back; ai.idx = Math.min(1, back.pts.length - 1); return this.aiControl(dt); }
+          ai.idx = n - 1;
+          return [this.speed > 0.5 ? -1 : 0, 0];
         }
       }
       tgt = pts[ai.idx % n];
@@ -230,7 +234,13 @@ export class Vehicle {
     const steer = clamp(-d * 2.2, -1, 1);
     // Slow for corners and obstacles
     let cruise = ai.cruise * (1 - Math.min(0.6, Math.abs(d)));
-    const blocked = this.obstacleAhead();
+    // Two AI vehicles waiting on each other (at a tight corner where the lanes cross) would
+    // wait forever: after a few seconds, ease forward past other traffic for a moment
+    ai.creep = Math.max(0, (ai.creep || 0) - dt);
+    let blocked = this.obstacleAhead();
+    ai.trafficT = blocked === 'traffic' ? (ai.trafficT || 0) + dt : 0;
+    if (ai.trafficT > 4) { ai.creep = 2.5; ai.trafficT = 0; }
+    if (blocked === 'traffic' && ai.creep > 0) { blocked = null; cruise = Math.min(cruise, 3); }
     if (blocked) {
       cruise = 0;
       if (blocked === 'player' && this.honkCd <= 0 && Math.hypot(this.game.player.x - this.x, this.game.player.z - this.z) < 9) {
@@ -240,6 +250,26 @@ export class Vehicle {
     }
     const throttle = this.speed < cruise - 0.5 ? 1 : this.speed > cruise + 1 ? -1 : 0;
     return [throttle, steer];
+  }
+
+  // Move an AI vehicle to the start of a lane like its own, where the player can't see it
+  // pop in and no other vehicle is parked. Only when the player isn't near it either.
+  respawnOutOfSight() {
+    const g = this.game, p = g.player, ai = this.ai;
+    if (Math.hypot(p.x - this.x, p.z - this.z) < 60) return false;
+    const own = this.homeLane ? this.homeLane.lane : ai.lane;
+    const cands = [own, ...g.world.lanes.filter((l) => l !== own && l.kind === own.kind && !l.loop)];
+    for (const lane of cands) {
+      const [sx, sz] = lane.pts[0];
+      if (Math.hypot(p.x - sx, p.z - sz) < 80) continue;
+      if (g.vehicles.some((v) => v !== this && Math.hypot(v.x - sx, v.z - sz) < 10)) continue;
+      ai.lane = lane; ai.idx = 1; ai.stuckT = 0;
+      this.x = sx; this.z = sz;
+      this.heading = Math.atan2(lane.pts[1][0] - sx, lane.pts[1][1] - sz);
+      this.speed = 0;
+      return true;
+    }
+    return false;
   }
 
   obstacleAhead() {
@@ -254,7 +284,14 @@ export class Vehicle {
     };
     const p = g.player;
     if (!p.vehicle && check(p.x, p.z, 0.5)) return 'player';
-    for (const v of g.vehicles) if (v !== this && !v.airborne && check(v.x, v.z, v.spec.width / 2)) return v.drivenByPlayer ? 'player' : 'car';
+    for (const v of g.vehicles) {
+      if (v === this || v.airborne || !check(v.x, v.z, v.spec.width / 2)) continue;
+      if (v.drivenByPlayer) return 'player';
+      if (!v.ai) return 'car';
+      // Oncoming traffic is in the other lane: don't stop for it
+      if (v.fx * this.fx + v.fz * this.fz < -0.5) continue;
+      return 'traffic';
+    }
     for (const npc of g.npcs) if (npc.visible && check(npc.x, npc.z, 0.4)) return 'npc';
     return null;
   }
