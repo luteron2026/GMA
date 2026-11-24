@@ -83,8 +83,8 @@ export class Imp {
     const r = g.world.colliders.resolve(this.x, this.z, this.radius);
     this.x = r.x; this.z = r.z;
 
-    // Contact with the player
-    if (this.state === 'chase') {
+    // Contact with the player (not while they're up in the chopper)
+    if (this.state === 'chase' && !(p.vehicle && p.vehicle.airborne)) {
       const v = p.vehicle;
       const reach = v ? v.spec.width / 2 + 1.1 : 1.5;
       if (v && Math.abs(v.speed) > 5 && this.hitsVehicle(v)) {
@@ -275,7 +275,8 @@ export class Projectile {
       }
     } else {
       const p = g.player;
-      if (Math.hypot(p.x - this.x, p.z - this.z) < (p.vehicle ? 2 : 1)) { p.hurt(16, null); return false; }
+      const high = p.vehicle && p.vehicle.airborne && p.vehicle.alt > 4; // flies over the chopper
+      if (!high && Math.hypot(p.x - this.x, p.z - this.z) < (p.vehicle ? 2 : 1)) { p.hurt(16, null); return false; }
     }
     return this.life > 0;
   }

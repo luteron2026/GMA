@@ -281,6 +281,35 @@ lot_shapes = [ln.buffer(8.5, cap_style=2) for ln in aisles]
 for wid, (tags, pts) in ways.items():
     if tags.get('amenity') == 'parking' and len(pts) > 3:
         lot_shapes.append(Polygon(pts).buffer(0))
+# Parking OpenStreetMap doesn't have: nose-in rows along both sides of the dorm drive, in front
+# of C.W. Smith and Waldock (south) and Sweazy and Dixon (north). Where they are comes from the
+# parked cars in the 2023 USGS LiDAR (tools/fetch_lidar.py). Each row: x range, side of the
+# drive ('S' or 'N'), and how far the stall centers sit from the drive's center line.
+DORM_DRIVE_AT = Point(-290, -141)
+DORM_ROWS = [(-323, -208, 'S', 6.4), (-326, -227, 'N', 6.4), (-213, -172, 'N', 6.4)]
+dorm_drive = min((ln for r, ln in road_geoms if r['kind'] == 'service'), key=lambda ln: ln.distance(DORM_DRIVE_AT))
+dorm_stalls = []
+for x0, x1, side, off in DORM_ROWS:
+    L = dorm_drive.length
+    d = 0.0
+    while d < L:
+        p = dorm_drive.interpolate(d)
+        if x0 <= p.x <= x1:
+            p1 = dorm_drive.interpolate(max(0, d - 1)); p2 = dorm_drive.interpolate(min(L, d + 1))
+            a = math.atan2(p2.y - p1.y, p2.x - p1.x)
+            nx, ny = -math.sin(a), math.cos(a)  # left of the drive's direction
+            if (ny < 0) != (side == 'S'): nx, ny = -nx, -ny
+            c = Point(p.x + nx * off, p.y + ny * off)
+            # The stall's back corners must clear the dorm walls
+            back = [Point(c.x + nx * 2.7 + ny * s * 1.4, c.y + ny * 2.7 - nx * s * 1.4) for s in (-1, 1)]
+            if not any(all_buildings.buffer(0.3).contains(q) for q in back + [c]):
+                dorm_stalls.append([R(c.x), R(c.y), round(math.atan2(-ny, -nx), 3)])
+                # Paved from the drive's edge to the back of the stall
+                lot_shapes.append(Polygon([(p.x + nx * 2.5 - ny * 1.6, p.y + ny * 2.5 + nx * 1.6),
+                                           (p.x + nx * (off + 3.0) - ny * 1.6, p.y + ny * (off + 3.0) + nx * 1.6),
+                                           (p.x + nx * (off + 3.0) + ny * 1.6, p.y + ny * (off + 3.0) - nx * 1.6),
+                                           (p.x + nx * 2.5 + ny * 1.6, p.y + ny * 2.5 - nx * 1.6)]))
+        d += 2.9
 lots_geom = unary_union(lot_shapes).buffer(0.5).buffer(-0.5).simplify(0.6)
 lots = []
 for g in (lots_geom.geoms if hasattr(lots_geom, 'geoms') else [lots_geom]):
@@ -308,6 +337,7 @@ for ln in aisles:
             # heading the car faces: toward the aisle
             stalls.append([R(c.x), R(c.y), round(math.atan2(-ny, -nx), 3)])
         d += 2.9
+stalls += dorm_stalls
 
 # ---------------------------------------------------------------- lawns and fields
 campus_parts = list(campus.geoms) if hasattr(campus, 'geoms') else [campus]

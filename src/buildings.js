@@ -128,7 +128,13 @@ export function planSite(world) {
         // Step out until the plaza fits
         for (let d = L.fountain.dist; d < L.fountain.dist + 12; d += 1) {
           const x = e.mx + e.nx * d, y = e.my + e.ny * d;
-          if (clear(x, y, 3.5)) { site.fountains.push({ x, y, plaza: 8, bollards: !!L.fountain.bollards }); break; }
+          if (clear(x, y, 3.5)) {
+            // The plaza stops short of any parking lot next to it (Dixon's sits by the dorm lot)
+            let plaza = 8;
+            for (const l of world.data.lots) plaza = Math.min(plaza, pointInPoly(x, y, l.poly) ? 0 : distToPolyline(x, y, l.poly, true) - 0.6);
+            site.fountains.push({ x, y, plaza: Math.max(4.2, plaza), bollards: !!L.fountain.bollards });
+            break;
+          }
         }
       }
     }

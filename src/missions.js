@@ -209,7 +209,7 @@ const MISSIONS = [
       const c = m.place('quad');
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2;
-        const npc = m.game.spawnMissionNPC(c[0] + Math.cos(a) * 30, c[1] + Math.sin(a) * 30);
+        const npc = m.game.spawnMissionNPC(...m.openSpot([c[0] + Math.cos(a) * 30, c[1] + Math.sin(a) * 30], 0.6));
         npc.setNeed({ type: 'loud', ask: '' });
         npc.mesh.remove(npc.bubble);
         npc.bubble = makeBubble('♪', '#ff7ad9');
@@ -378,6 +378,9 @@ export class Missions {
     this.refreshMarkers();
     g.hud.big(def.title, def.blurb);
     g.audio.deed();
+    // Vehicles handed out by an earlier run of a mission go away (unless you're driving one),
+    // so replaying doesn't pile up golf carts and sedans
+    for (const v of g.vehicles.filter((q) => q.missionSpawned && !q.drivenByPlayer)) g.removeVehicle(v);
     def.begin(m);
     if (m.timer != null) g.hud.setTimer(m.timer);
   }
@@ -504,6 +507,7 @@ class MissionCtx {
   }
 
   pickup(pos, kind, onGet) {
+    pos = this.openSpot(pos);
     const mesh = makeItem(kind);
     mesh.scale.setScalar(1.6);
     const ring = makeBeacon(0x7fd0ff, 1.4);
@@ -535,13 +539,25 @@ class MissionCtx {
     }
   }
 
+  // Nearest open ground to a spot: out of walls, fences, tables and trees
+  openSpot([x, z], r = 1.2) {
+    let p = { x, z };
+    for (let i = 0; i < 6; i++) p = this.game.world.colliders.resolve(p.x, p.z, r);
+    return [p.x, p.z];
+  }
+
+  // A vehicle for the mission, parked where it fits (not in a wall, on a road, on another
+  // car or on top of the player)
   spawnVehicle(type, pos, heading) {
-    const v = this.game.spawnVehicle(type, pos[0], pos[1], heading);
+    const [x, z] = this.game.freeVehicleSpot(type, pos[0], pos[1], heading);
+    const v = this.game.spawnVehicle(type, x, z, heading);
+    v.missionSpawned = true;
     this.vehicles.push(v);
     return v;
   }
 
   rider(pos) {
+    pos = this.openSpot(pos, 0.6);
     const mesh = makePerson(randomLook());
     mesh.position.set(pos[0], groundY(pos[0], pos[1]), pos[1]);
     animatePerson(mesh, 0, 0);
@@ -560,7 +576,7 @@ class MissionCtx {
     for (const w of this.waypoints) this.game.scene.remove(w.mesh);
     for (const pk of this.pickups) this.game.scene.remove(pk.mesh, pk.ring);
     for (const r of this.ridersList) this.game.scene.remove(r.mesh);
-    // Mission vehicles stay in the world unless the player is far away
+    // Mission vehicles stay parked until the next mission starts or the vehicles are reset
     this.waypoints = []; this.pickups = []; this.blipList = [];
   }
 }
