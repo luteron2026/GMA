@@ -48,13 +48,17 @@ function panelTexture() {
   return panelTex;
 }
 
-// The real solar carports: the North Campus lot and the lot west of C.W. Smith (the dorm lot
-// east of Slight and the rows along the dorm drive in front of C.W. Smith and Waldock have none)
-const SOLAR_LOTS = ['northLot', 'smithLot'];
+// The real solar carports: the North Campus lot and the two rows of stalls along the dorm drive
+// in front of C.W. Smith and Waldock (none in the lot west of C.W. Smith or the dorm lot east of
+// Slight). Each lot is picked by a point inside it, in campus coordinates.
+const SOLAR_LOTS = [
+  [232.7, 193.5], // North Campus lot
+  [-280, -149.5], // dorm drive, C.W. Smith / Waldock side
+  [-280, -137.5], // dorm drive, Sweazy side
+];
 
 export function buildSolarCarports(world, boxes) {
-  const lots = SOLAR_LOTS.map((k) => world.places[k]).filter(Boolean)
-    .map(([x, z]) => world.lots.find((l) => pointInPoly(x, z, l.wpts))).filter(Boolean);
+  const lots = SOLAR_LOTS.map(([x, y]) => world.lots.find((l) => pointInPoly(x, -y, l.wpts))).filter(Boolean);
   const inSolarLot = (x, y) => lots.some((l) => pointInPoly(x, -y, l.wpts));
   // Straight rows get long canopies; stalls fanned around a curve get one panel each,
   // which line up into a curved canopy
