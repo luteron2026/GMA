@@ -150,7 +150,12 @@ export class Game {
     this.spawnVehicle('tank', tk[0], tk[1], tk[2]);
     const hp = w.places.helipad;
     this.spawnVehicle('heli', hp[0], hp[1], hp[2]);
-    if (w.places.forkliftSpot) { const f = w.places.forkliftSpot; this.spawnVehicle('forklift', f[0], f[1], f[2]); }
+    if (w.places.forkliftSpot) {
+      // Somewhere it fits whole, clear of the fence along the road and the patio tables
+      const f = w.places.forkliftSpot;
+      const [x, z] = w.openVehicleSpot(f[0], f[1], f[2], VEHICLE_TYPES.forklift);
+      this.spawnVehicle('forklift', x, z, f[2]);
+    }
     // Traffic on the real streets, carts on the campus service roads
     const carLanes = w.lanes.filter((l) => l.kind === 'car' && l.length > 150);
     for (const lane of carLanes) {
