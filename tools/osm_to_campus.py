@@ -541,8 +541,11 @@ places = {
     'placeritos': open_near(-150, 232),
     'meadview': open_near(-62, 150),
     'quigley': open_near(166, 60),
-    'hillBase': open_near(45, -250, avoid_roads=False),
-    'hill': [30, -300],
+    # Prayer Hill is the knob above the Chancellor's House where the real white cross stands
+    # (seen from the main entrance on Placerita Canyon Rd); the climb starts where the trail up
+    # to it leaves campus
+    'hillBase': open_near(45, -168, avoid_roads=False),
+    'hill': [121, -231],
     'cartHotchkiss': open_near(-70, -95),
     'cartDunkin': open_near(150, -120),
     'cartDorms': open_near(-180, -135),

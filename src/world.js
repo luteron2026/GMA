@@ -739,7 +739,7 @@ export class World {
 
     // Prayer Hill: a white cross in a clearing ringed with rocks, open toward the trail
     const [hx, hz] = this.places.hill;
-    const paint = mat(0xf4f2ec, { emissive: 0x2a2a28 });
+    const paint = mat(0xffffff, { emissive: 0x77777a }); // reads white even with the sun behind it
     const cy = groundY(hx, hz - 22);
     const v = new THREE.Mesh(GEOM.box, paint); v.scale.set(0.6, 10, 0.6); v.position.set(hx, cy + 4, hz - 22); v.castShadow = true; this.scene.add(v);
     const hb = new THREE.Mesh(GEOM.box, paint); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, cy + 6.8, hz - 22); this.scene.add(hb);
@@ -754,6 +754,8 @@ export class World {
       if (da < 0.3) continue; // trail gap
       const r = 35;
       const x = hx + Math.cos(a) * r, z = hz + Math.sin(a) * r;
+      // The hiking trails over the hilltop stay open
+      if (CAMPUS.roads.some((t) => t.kind === 'trail' && distToPolyline(x, -z, t.pts) < 4)) continue;
       const m = new THREE.Mesh(GEOM.sphere, rock);
       const sc = 3 + ((i * 37) % 5) * 0.4;
       m.scale.set(sc, sc * 0.7, sc);
@@ -909,8 +911,8 @@ export class World {
     }
     const { blds, fields, pools } = this._plantCheck;
     if (this.pavedAt(x, y, m)) return false;
-    // Room for the parked tank and the helicopter's rotor
-    const spots = [[...this.places.tankSpot, 6], [...this.places.helipad, 8]];
+    // Room for the parked tank and the helicopter's rotor, and nothing hiding the hill cross
+    const spots = [[...this.places.tankSpot, 6], [...this.places.helipad, 8], [this.places.hill[0], this.places.hill[1] - 22, 0, 7]];
     if (this.places.forkliftSpot) spots.push([...this.places.forkliftSpot, 3.5]);
     for (const [px, pz, , r] of spots) if (Math.hypot(x - px, y + pz) < r) return false;
     for (const b of blds) {
