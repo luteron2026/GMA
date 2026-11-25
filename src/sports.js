@@ -487,7 +487,8 @@ export class Pickleball {
 // ---------- beach volleyball ----------
 
 const V = { hl: 8, hw: 4, net: 2.43 }; // 16 x 8 m court
-const VG = 7.2; // a touch floaty, so there's time to get under it
+const VG = 6.4; // floaty, so there's time to get under it
+const CONTACT_H = 1.0; // the height you play most balls at (the ring shows where that is)
 const V_WIN = 11;
 const BEACH_RIVALS = [['Pastor Dave', 'Coach Ramirez'], ['RA Brooke', 'RA Tyler'], ['Dr. Ellison', 'Dr. Ellison\'s TA'], ['The Smith Hall Twins', ''], ['Grandma Ruth', 'her grandson Kyle']];
 const BEACH_MATES = ['Hannah', 'Josiah', 'Abby', 'Caleb', 'Naomi'];
@@ -602,6 +603,14 @@ export class Volleyball {
     return { t, u: b.u + b.vu * t, v: b.v + b.vv * t };
   }
 
+  // Where to stand to play the ball on your side: where it drops to contact height
+  // (a spike comes in low and fast, so meet it a little lower)
+  contactSpot() {
+    const b = this.ball;
+    const land = this.predict(b.spike ? 0.7 : CONTACT_H);
+    return land && land.u < 0 ? land : null;
+  }
+
   // The open spot on the other side: away from both defenders
   gap(team, depth) {
     const sg = team === 0 ? 1 : -1;
@@ -653,7 +662,8 @@ export class Volleyball {
     }
     if (spike) {
       if (ai) tu = Math.sign(tu) * Math.max(Math.abs(tu), 4.8); // aimed deep enough to clear the net
-      this.drive(tu, tv, ai ? 13 + Math.random() * 3 : 17);
+      // Their spikes are hard but readable; your teammate's (and yours) are the real thing
+      this.drive(tu, tv, p.team === 1 ? 10 + Math.random() * 2.5 : ai ? 13 + Math.random() * 3 : 17);
       this.ball.spike = true;
       // Too flat to clear the net from here: hit it higher
       const nh = this.netHeight();
@@ -734,9 +744,9 @@ export class Volleyball {
     // AI hitters time their jump for the attack; you jump with Space near the net
     const attacking = p !== this.me && this.touch.team === p.team && this.touch.n === 2 && Math.abs(p.u) < 2.8;
     const top = p.jump > 0 || attacking ? 3.5 : 2.7;
-    // AI defenders dive for balls a bit further away
-    const reach = p === this.me ? 1.3 : 1.6;
-    return Math.hypot(b.u - p.u, b.v - p.v) < reach && b.h > 0.35 && b.h < top && Math.sign(b.u || -1) === this.side(p);
+    // You get a generous reach (more when diving for a spike); AI defenders a bit less
+    const reach = p === this.me ? (b.spike ? 1.8 : 1.5) : 1.6;
+    return Math.hypot(b.u - p.u, b.v - p.v) < reach && b.h > 0.25 && b.h < top && Math.sign(b.u || -1) === this.side(p);
   }
 
   // Who on `team` should play the next ball
@@ -752,8 +762,9 @@ export class Volleyball {
   update(dt) {
     const g = this.game, inp = g.input;
     if (inp.wasPressed('action')) { g.toast('🏐 You left the court. Good game!'); g.endSport(); return; }
+    // Space arms your hit for a second: you play the ball as soon as it's in reach
     this.buffer = Math.max(0, this.buffer - dt);
-    if (inp.wasPressed('throw')) this.buffer = 0.35;
+    if (inp.wasPressed('throw')) this.buffer = 1.0;
     for (const p of this.all) {
       p.swing = Math.max(0, p.swing - dt);
       if (p.jump > 0) { p.jump += p.jv * dt; p.jv -= 9.8 * dt; if (p.jump <= 0) { p.jump = 0; p.jv = 0; } }
@@ -771,6 +782,12 @@ export class Volleyball {
     } else {
       this.run(me, me.u + f * 3, me.v - t * 3, (Math.abs(f) + Math.abs(t) > 0.1 ? sp : 0), dt);
       if (Math.abs(f) + Math.abs(t) < 0.1) { me.vu *= Math.max(0, 1 - dt * 10); me.vv *= Math.max(0, 1 - dt * 10); }
+      // Once you're close, you get pulled the last couple of steps under a ball that's yours
+      const spot = this.phase === 'rally' && this.recv === me ? this.contactSpot() : null;
+      if (spot) {
+        const du = spot.u - me.u, dv = spot.v - me.v, d = Math.hypot(du, dv);
+        if (d > 0.15 && d < 2.6) { const k = Math.min(1, dt * 4); me.u += du * k; me.v += dv * k; }
+      }
     }
 
     const b = this.ball;
@@ -818,7 +835,8 @@ export class Volleyball {
         // Digging out a hard spike (or a ball they had to sprint for) doesn't always work
         if (this.touch.team !== p.team) {
           const stretch = Math.hypot(b.u - p.u, b.v - p.v);
-          const pDig = (b.spike ? 0.55 : 0.9) - Math.max(0, stretch - 1) * 0.5 - (p.team === 0 ? 0 : 0.05);
+          const pDig = p.team === 0 ? (b.spike ? 0.8 : 0.96) - Math.max(0, stretch - 1.2) * 0.3
+            : (b.spike ? 0.65 : 0.9) - Math.max(0, stretch - 1) * 0.5;
           if (Math.random() > pDig) {
             this.missed = p;
             if (Math.random() < 0.5) {
@@ -888,8 +906,8 @@ export class Volleyball {
 
   updateHud() {
     const touch = this.game.input.isTouch;
-    const help = touch ? 'Stick: run · 📖 hit when it reaches you (aim with the stick) · ✋ quit'
-      : '<b>WASD</b> run · <b>Space</b> hit when it reaches you (hold <b>A/D</b> to aim, <b>W</b> to send it over, <b>S</b> to dink) · <b>E</b> quit';
+    const help = touch ? 'Stick: run to the ring · 📖 as the ball comes down (aim with the stick) · ✋ quit'
+      : '<b>WASD</b> run to the ring · <b>Space</b> as the ball comes down (hold <b>A/D</b> to aim, <b>W</b> to send it over, <b>S</b> to dink) · <b>E</b> quit';
     const html = `🏐 <b>You & ${this.mateName} ${this.score[0]}</b> – ${this.score[1]} ${this.opNames}<br><span style="font-weight:400;font-size:13px">${this.msg || help}</span>`;
     if (html !== this._hud) { this.hud.innerHTML = html; this._hud = html; }
   }
@@ -912,8 +930,8 @@ export class Volleyball {
     const [sx, sy, sz] = this.W(b.u, b.v, 0.03);
     this.shadow.position.set(sx, sy, sz);
     // Landing marker for balls coming to your side
-    const land = this.phase === 'rally' ? this.predict(0.17) : null;
-    const show = land && land.u < 0 && b.vh < 6;
+    const land = this.phase === 'rally' ? this.contactSpot() : null;
+    const show = land && b.vh < 6;
     this.marker.visible = !!show;
     if (show) {
       const [mx, my, mz] = this.W(land.u, land.v, 0.05);

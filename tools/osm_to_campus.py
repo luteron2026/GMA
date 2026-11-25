@@ -180,6 +180,9 @@ for wid, (tags, pts) in ways.items():
     groups.setdefault(key, []).append(LineString(pts))
 
 WIDTH = {'street': 12, 'service': 6.5, 'aisle': 6.5, 'driveway': 4.5, 'path': 3, 'trail': 2.6}
+# Drives narrower than their kind: the one-way aisle between the two angled rows south of
+# Reese Field (OSM way id -> width)
+WIDTH_BY_WAY = {'484140112': 4.5}
 roads = []
 road_geoms = []
 for (kind, key), lines in groups.items():
@@ -187,7 +190,7 @@ for (kind, key), lines in groups.items():
     for ln in as_lines(merged.intersection(CLIP)):
         ln = ln.simplify(0.4)
         if ln.length < 6: continue
-        r = {'kind': kind, 'width': WIDTH[kind], 'pts': coords(ln)}
+        r = {'kind': kind, 'width': WIDTH_BY_WAY.get(key, WIDTH[kind]), 'pts': coords(ln)}
         if kind == 'street':
             if key and not key.isdigit():
                 r['name'] = key
@@ -310,6 +313,52 @@ for x0, x1, side, off in DORM_ROWS:
                                            (p.x + nx * (off + 3.0) + ny * 1.6, p.y + ny * (off + 3.0) - nx * 1.6),
                                            (p.x + nx * 2.5 + ny * 1.6, p.y + ny * 2.5 - nx * 1.6)]))
         d += 2.9
+
+# Angled parking along the one-way drives around Reese Field: east of the MacArthur Center
+# (both sides), along its top by the Kinesiology Center, and south of the field. OpenStreetMap
+# only has the drives; the painted stall lines show up in the 2023 USGS LiDAR intensity
+# (asphalt is dark, the lines bright). Stalls lean forward in the direction the drive runs
+# (OSM's way direction). Each row: a point on the drive, the coordinate ('x' or 'y') and range
+# the row covers, which side ('L' or 'R' of the direction of travel) and the stall angle.
+ANGLED_ROWS = [
+    ((-35, 40), 'y', 18, 84, 'L', 60),    # east of MacArthur, along the building
+    ((-35, 40), 'y', 12, 83, 'R', 60),    # east of MacArthur, the Herwaldt Lawn side
+    ((-45, 92), 'x', -64, -27, 'L', 60),  # along the top, by the Kinesiology Center
+    ((30, -10), 'x', -30, 98, 'L', 60),   # south of Reese Field, both sides of the aisle
+    ((30, -10), 'x', -30, 98, 'R', 60),
+]
+STALL_W, STALL_L = 2.75, 5.4  # same as src/surfaces.js
+angled_stalls = []
+for at, axis, lo, hi, side, deg in ANGLED_ROWS:
+    road, drive = min(((r, ln) for r, ln in road_geoms if r['kind'] == 'service'), key=lambda rl: rl[1].distance(Point(at)))
+    th = math.radians(deg)
+    hw = road['width'] / 2
+    depth = STALL_L * math.sin(th) + STALL_W * math.cos(th)  # how far the row reaches off the drive
+    off = hw + 0.2 + depth / 2
+    step = STALL_W / math.sin(th)  # along the drive, so neighbors share their lines
+    L = drive.length
+    d = 0.0
+    while d < L:
+        p = drive.interpolate(d)
+        if lo <= (p.x if axis == 'x' else p.y) <= hi:
+            p1 = drive.interpolate(max(0, d - 1)); p2 = drive.interpolate(min(L, d + 1))
+            a = math.atan2(p2.y - p1.y, p2.x - p1.x)
+            tx, ty = math.cos(a), math.sin(a)
+            nx, ny = (-ty, tx) if side == 'L' else (ty, -tx)
+            c = Point(p.x + nx * off, p.y + ny * off)
+            # Into the stall: away from the drive and forward
+            ix, iy = nx * math.sin(th) + tx * math.cos(th), ny * math.sin(th) + ty * math.cos(th)
+            corners = [Point(c.x + ix * u * STALL_L / 2 - iy * v * STALL_W / 2, c.y + iy * u * STALL_L / 2 + ix * v * STALL_W / 2) for u in (-1, 1) for v in (-1, 1)]
+            if not any(all_buildings.buffer(0.3).contains(q) for q in corners + [c]):
+                angled_stalls.append([R(c.x), R(c.y), round(math.atan2(-iy, -ix), 3)])
+                # Paved from the drive's edge to the back of the stall
+                e = hw - 0.5
+                lot_shapes.append(Polygon([(p.x + nx * e - tx * step / 2, p.y + ny * e - ty * step / 2),
+                                           (p.x + nx * e + tx * step / 2, p.y + ny * e + ty * step / 2),
+                                           (p.x + nx * (hw + 0.4 + depth) + tx * step / 2, p.y + ny * (hw + 0.4 + depth) + ty * step / 2),
+                                           (p.x + nx * (hw + 0.4 + depth) - tx * step / 2, p.y + ny * (hw + 0.4 + depth) - ty * step / 2)]).union(
+                    Polygon([(q.x, q.y) for q in (corners[0], corners[1], corners[3], corners[2])]).buffer(0.4)))
+        d += step
 lots_geom = unary_union(lot_shapes).buffer(0.5).buffer(-0.5).simplify(0.6)
 lots = []
 for g in (lots_geom.geoms if hasattr(lots_geom, 'geoms') else [lots_geom]):
@@ -337,7 +386,7 @@ for ln in aisles:
             # heading the car faces: toward the aisle
             stalls.append([R(c.x), R(c.y), round(math.atan2(-ny, -nx), 3)])
         d += 2.9
-stalls += dorm_stalls
+stalls += dorm_stalls + angled_stalls
 
 # ---------------------------------------------------------------- lawns and fields
 campus_parts = list(campus.geoms) if hasattr(campus, 'geoms') else [campus]
