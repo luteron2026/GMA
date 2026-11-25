@@ -436,7 +436,6 @@ export class World {
 
       const [cx, cy] = b.obb;
       b.center = [cx, -cy];
-      if (b.id === 'chapel') this.addRoofCross(cx, cy, top);
       if (b.name) {
         const label = makeLabel(b.name, b.sub, { width: b.small ? 11 : 15 });
         label.position.set(cx, top + (b.small ? 2.5 : 3.5), -cy);
@@ -563,30 +562,51 @@ export class World {
       return [cx, cy];
     };
     const nearBuilding = (x, y, m) => this.buildings.some((b) => pointInPoly(x, y, b.poly) || distToPolyline(x, y, b.poly, true) < m);
-    // Helipad: open pavement in the Reese Center lot, with room for the rotor
+    // Helipad: its own concrete pad on open, level ground beside the Reese Center lot (not in
+    // the lot, where it took the place of whole rows of stalls), with room for the rotor and
+    // clear of walks, drives, buildings, carports, sports fields and the LiDAR trees
     const [ex, ey] = W(this.places.eastLot); // back to campus space
-    // The open spot that covers the fewest parking stalls (so the lot keeps its rows)
-    let pad = [ex, ey], best = Infinity;
-    for (let gx = ex - 60; gx <= ex + 60; gx += 1.5) {
-      for (let gy = ey - 60; gy <= ey + 60; gy += 1.5) {
-        const d = Math.hypot(gx - ex, gy - ey);
-        if (d < 12 || d > 60) continue; // off the mission marker, but in this lot
-        const lot = CAMPUS.lots.find((l) => pointInPoly(gx, gy, l.poly));
-        if (!lot || distToPolyline(gx, gy, lot.poly, true) < 6 || nearBuilding(gx, gy, 9)) continue;
-        const stalls = this.data.stalls.filter((st) => Math.hypot(st[0] - gx, st[1] - gy) < 8.5).length;
-        const score = stalls * 10 + d * 0.1;
+    const fields = CAMPUS.lawns.filter((l) => ['pitch', 'court', 'turf', 'sand', 'field'].includes(l.kind)).map((l) => l.poly);
+    const lotEdge = (x, y) => Math.min(...CAMPUS.lots.map((l) => (pointInPoly(x, y, l.poly) ? 0 : distToPolyline(x, y, l.poly, true))));
+    let pad = null, best = Infinity;
+    for (let gx = ex - 80; gx <= ex + 80; gx += 2) {
+      for (let gy = ey - 80; gy <= ey + 80; gy += 2) {
+        if (!inCore(gx, gy) || !CAMPUS.campus.some((c) => pointInPoly(gx, gy, c))) continue;
+        if (this.pavedAt(gx, gy, 7.5) || nearBuilding(gx, gy, 10)) continue;
+        if (fields.some((f) => pointInPoly(gx, gy, f) || distToPolyline(gx, gy, f, true) < 8)) continue;
+        if (STRUCTURES.some(([sx, sy, len, wid]) => Math.hypot(sx - gx, sy - gy) < Math.max(len, wid) / 2 + 8)) continue;
+        // Level: the ground under the pad varies by less than a meter
+        let lo = Infinity, hi = -Infinity;
+        for (const [ox, oy] of [[0, 0], [6, 0], [-6, 0], [0, 6], [0, -6], [4.5, 4.5], [-4.5, 4.5], [4.5, -4.5], [-4.5, -4.5]]) {
+          const h = heightAtCampus(gx + ox, gy + oy); lo = Math.min(lo, h); hi = Math.max(hi, h);
+        }
+        if (hi - lo > 1) continue;
+        // Every tree that would have to go to make room counts heavily
+        // (any crown reaching over the rotor), and open sky beyond that is a plus
+        let trees = 0, near = 0;
+        for (const t of TREES) {
+          if (Math.abs(t[0] - gx) > 30 || Math.abs(t[1] - gy) > 30) continue;
+          const d = Math.hypot(t[0] - gx, t[1] - gy) - t[3];
+          if (d < 7.5) trees++; else if (d < 12) near++;
+        }
+        // Close to the lot, so it's a short walk from the cars
+        const score = trees * 25 + near * 3 + (hi - lo) * 8 + lotEdge(gx, gy) + Math.hypot(gx - ex, gy - ey) * 0.05;
         if (score < best) { best = score; pad = [gx, gy]; }
       }
     }
-    // Line the chopper up with the nearest aisle
-    let ang = 0, bd = Infinity;
-    for (const r of CAMPUS.roads) {
-      if (r.kind !== 'aisle' && r.kind !== 'service') continue;
-      for (let i = 0; i < r.pts.length - 1; i++) {
-        const d = distToPolyline(pad[0], pad[1], [r.pts[i], r.pts[i + 1]]);
-        if (d < bd) { bd = d; ang = Math.atan2(r.pts[i + 1][0] - r.pts[i][0], -(r.pts[i + 1][1] - r.pts[i][1])); }
+    if (!pad) pad = [ex, ey];
+    // Nose pointing away from the lot, out over the open ground
+    let near = null, nd = Infinity;
+    for (const l of CAMPUS.lots) {
+      for (let i = 0; i < l.poly.length; i++) {
+        const [ax, ay] = l.poly[i], [bx, by] = l.poly[(i + 1) % l.poly.length];
+        const ux = bx - ax, uy = by - ay, L2 = ux * ux + uy * uy || 1e-9;
+        const t = Math.max(0, Math.min(1, ((pad[0] - ax) * ux + (pad[1] - ay) * uy) / L2));
+        const px = ax + ux * t, py = ay + uy * t, d = Math.hypot(pad[0] - px, pad[1] - py);
+        if (d < nd) { nd = d; near = [px, py]; }
       }
     }
+    const ang = near ? Math.atan2(pad[0] - near[0], -(pad[1] - near[1])) : 0;
     this.places.helipad = [pad[0], -pad[1], ang];
     // Tank: open lawn at North Campus, off the walks and clear of the buildings
     const [nx, ny] = W(this.places.northLawn);
@@ -643,30 +663,54 @@ export class World {
     return e;
   }
 
-  addRoofCross(x, y, top) {
-    const gold = mat(0xd4af37, { emissive: 0x332200 });
-    const v = new THREE.Mesh(GEOM.box, gold); v.scale.set(0.5, 5, 0.5); v.position.set(x, top + 2.5, -y); this.scene.add(v);
-    const hbar = new THREE.Mesh(GEOM.box, gold); hbar.scale.set(2.6, 0.5, 0.5); hbar.position.set(x, top + 3.6, -y); this.scene.add(hbar);
-  }
-
   // Lou Herwaldt Stadium: bleachers and a backstop behind home plate
   buildStadium() {
     const [hx, hy] = CAMPUS.diamond.bases[0], [sx, sy] = CAMPUS.diamond.bases[2];
     const len = Math.hypot(sx - hx, sy - hy);
-    const dx = (sx - hx) / len, dy = (sy - hy) / len;
-    const cx = hx - dx * 9, cy = hy - dy * 9;
+    let dx = (sx - hx) / len, dy = (sy - hy) / len;
+    // The angled parking runs along the drive just behind home plate: square the stands up
+    // with its edge and make them as big as fits between the plate and the stalls
+    let nearLot = null, nd = 30;
+    for (const l of CAMPUS.lots) {
+      for (let i = 0; i < l.poly.length; i++) {
+        const [ax, ay] = l.poly[i], [bx, by] = l.poly[(i + 1) % l.poly.length];
+        const d = distToPolyline(hx, hy, [[ax, ay], [bx, by]]);
+        if (d < nd) { nd = d; nearLot = [bx - ax, by - ay]; }
+      }
+    }
+    if (nearLot) {
+      const L = Math.hypot(...nearLot) || 1;
+      let nx = -nearLot[1] / L, ny = nearLot[0] / L;
+      if (nx * dx + ny * dy < 0) { nx = -nx; ny = -ny; }
+      dx = nx; dy = ny;
+    }
+    const inLot = (x, y) => CAMPUS.lots.some((l) => pointInPoly(x, y, l.poly) || distToPolyline(x, y, l.poly, true) < 0.6);
+    let fit = { rows: 3, w: 16, back: 6 };
+    search: for (const rows of [4, 3]) {
+      for (const w of [22, 18, 16]) {
+        for (let back = 9; back >= 6; back -= 0.5) {
+          const bx = hx - dx * back, by = hy - dy * back, zb = 1.4 * rows - 1.7;
+          let clear = true;
+          for (let a = -w / 2; a <= w / 2 && clear; a += 0.5) {
+            for (let b = -3.2; b <= zb && clear; b += 0.3) if (inLot(bx + dy * a - dx * b, by - dx * a - dy * b)) clear = false;
+          }
+          if (clear) { fit = { rows, w, back }; break search; }
+        }
+      }
+    }
+    const cx = hx - dx * fit.back, cy = hy - dy * fit.back;
     const g = new THREE.Group();
     const steel = mat(0x8a95a5), seat = mat(0x1f3a6e);
     // Rows rise away from the field (local +z); the backstop net sits on the field side
-    for (let k = 0; k < 4; k++) {
+    for (let k = 0; k < fit.rows; k++) {
       const step = new THREE.Mesh(GEOM.box, k % 2 ? steel : seat);
-      step.scale.set(22, 1.2 + k * 0.7, 1.4);
+      step.scale.set(fit.w, 1.2 + k * 0.7, 1.4);
       step.position.set(0, (0.6 + k * 0.7) / 2 - 0.3, -1 + 1.4 * k);
       step.castShadow = !this.lowSpec;
       g.add(step);
     }
     const net = new THREE.Mesh(GEOM.box, new THREE.MeshLambertMaterial({ color: 0x333333, transparent: true, opacity: 0.35 }));
-    net.scale.set(16, 6, 0.1); net.position.set(0, 3, -3); g.add(net);
+    net.scale.set(Math.min(16, fit.w), 6, 0.1); net.position.set(0, 3, -3); g.add(net);
     g.position.set(cx, heightAtCampus(cx, cy), -cy);
     // Local -z points at the field: world (dx, -dy) = (-sin θ, -cos θ)
     const th = Math.atan2(-dx, dy);
@@ -674,7 +718,8 @@ export class World {
     this.scene.add(g);
     // Collider box around the stands and net
     const ax = [Math.cos(th), -Math.sin(th)], az = [Math.sin(th), Math.cos(th)];
-    const corners = [[-11, -3.2], [11, -3.2], [11, 4], [-11, 4]].map(([a, b]) => [cx + ax[0] * a + az[0] * b, -cy + ax[1] * a + az[1] * b]);
+    const hw = fit.w / 2, zb = 1.4 * fit.rows - 1.7;
+    const corners = [[-hw, -3.2], [hw, -3.2], [hw, zb], [-hw, zb]].map(([a, b]) => [cx + ax[0] * a + az[0] * b, -cy + ax[1] * a + az[1] * b]);
     this.colliders.addPoly(corners, 'bleachers');
     const label = makeLabel('Lou Herwaldt Stadium', 'Reese Field', { width: 15 });
     const [px, pz] = this.places.stadium;
@@ -692,12 +737,12 @@ export class World {
     entranceMonument(this.scene, ENTRANCE_SIGN, ex, ez, groundY(ex, ez), ang, !this.lowSpec);
     for (const k of [-2, 0, 2, 4.4]) this.colliders.addCircle(ex + Math.cos(ang) * k, ez - Math.sin(ang) * k, 1);
 
-    // Prayer Hill: a wooden cross in a clearing ringed with rocks, open toward the trail
+    // Prayer Hill: a white cross in a clearing ringed with rocks, open toward the trail
     const [hx, hz] = this.places.hill;
-    const wood = mat(0x6b4a2b);
+    const paint = mat(0xf4f2ec, { emissive: 0x2a2a28 });
     const cy = groundY(hx, hz - 22);
-    const v = new THREE.Mesh(GEOM.box, wood); v.scale.set(0.6, 10, 0.6); v.position.set(hx, cy + 4, hz - 22); v.castShadow = true; this.scene.add(v);
-    const hb = new THREE.Mesh(GEOM.box, wood); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, cy + 6.8, hz - 22); this.scene.add(hb);
+    const v = new THREE.Mesh(GEOM.box, paint); v.scale.set(0.6, 10, 0.6); v.position.set(hx, cy + 4, hz - 22); v.castShadow = true; this.scene.add(v);
+    const hb = new THREE.Mesh(GEOM.box, paint); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, cy + 6.8, hz - 22); this.scene.add(hb);
     this.colliders.addCircle(hx, hz - 22, 1, 'cross', cy + 9);
     const [bx, bz] = this.places.hillBase;
     const gap = Math.atan2(bz - hz, bx - hx);
@@ -1009,8 +1054,10 @@ export class World {
 
     // Conifers (pines, cedars, cypress): a real trunk under stacked tiers of boughs that get
     // narrower toward the top, each a slightly different green, so they read as pines rather
-    // than one smooth cone on a stick
-    const TIERS = 4;
+    // than one smooth cone on a stick. The tiers stand straight up the trunk (no lean, or the
+    // trunk shows between them) and each one's skirt sticks out only a little past the tier
+    // below, under one overall cone, so the tree doesn't come apart into lampshades.
+    const TIERS = 4, STEP = 0.22, TIER_H = 0.42;
     const cone = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
     const ctr = new THREE.InstancedMesh(trunkGeo, mat(0x5a4330), conifers.length);
     const cco = new THREE.InstancedMesh(cone, fadeNearCamera(new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true })), conifers.length * TIERS);
@@ -1021,13 +1068,13 @@ export class World {
       const crown = t.h - base;
       m4.compose(v.set(t.x, t.g - 0.2, t.z), q.identity(), sc.set(0.2 + t.h * 0.012, base + crown * 0.6, 0.2 + t.h * 0.012)); ctr.setMatrixAt(i, m4);
       for (let k = 0; k < TIERS; k++) {
-        const f = k / TIERS;
-        const y0 = base + crown * f * 0.8, th = crown * (k === TIERS - 1 ? 0.36 : 0.34);
+        const f = k * STEP; // where this tier starts, as a share of the crown
+        const y0 = base + crown * f, th = crown * (k === TIERS - 1 ? 1 - f : TIER_H);
         q.setFromAxisAngle(up, t.rot + k * 0.7);
-        const tr = r * (1 - f * 0.62);
-        m4.compose(v.set(t.x + (t.cx - t.x) * f, t.g + y0, t.z + (t.cz - t.z) * f), q, sc.set(tr, th, tr));
+        const tr = r * (1 - f);
+        m4.compose(v.set(t.x, t.g + y0, t.z), q, sc.set(tr, th, tr));
         cco.setMatrixAt(i * TIERS + k, m4);
-        col.copy(pine[Math.floor(t.c * pine.length)]).multiplyScalar(0.9 + t.c * 0.15 + k * 0.05);
+        col.copy(pine[Math.floor(t.c * pine.length)]).multiplyScalar(0.9 + t.c * 0.15 + k * 0.03);
         cco.setColorAt(i * TIERS + k, col);
       }
     });

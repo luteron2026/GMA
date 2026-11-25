@@ -273,10 +273,13 @@ export function buildSurfaces(world) {
   // Pickleball and volleyball courts
   if (world.courts) paintCourts(S, world.courts);
 
-  // Helipad in the Reese Center lot: a yellow ring around a white H
+  // Helipad beside the Reese Center lot: a concrete pad with an asphalt edge, and a yellow
+  // ring around a white H
   if (world.places.helipad) {
     const [hx, hz, ha] = world.places.helipad;
     const x = hx, y = -hz, ring = [];
+    S.lot.disc(x, y, 7.7, '#55575c', 48);
+    S.courtBase.disc(x, y, 7.2, '#b8b2a4', 48);
     for (let k = 0; k <= 48; k++) ring.push([x + Math.cos((k / 48) * Math.PI * 2) * 6.2, y + Math.sin((k / 48) * Math.PI * 2) * 6.2]);
     S.paint.band(ring, 0.45, LINE.yellow);
     // The H lines up with the chopper: its bars run along the nose direction (sin a, -cos a)

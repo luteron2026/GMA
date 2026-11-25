@@ -175,7 +175,13 @@ export function planStreetscape(world) {
     const sgn = p.tx * c[0] + p.ty * c[1] >= 0 ? 1 : -1;
     // Keep it in the lane drivers going that way use (right-hand traffic)
     const hx = p.tx * sgn, hy = p.ty * sgn;
-    plan.markings.push({ text: m.text, x: p.px + hy * 3, y: p.py - hx * 3, hx, hy });
+    let mx = p.px, my = p.py;
+    // Painted on the approach, never under a speed bump (the hump would cover the middle)
+    for (const b of plan.bumps) {
+      const u = (mx - b.x) * hx + (my - b.y) * hy, v = (mx - b.x) * -hy + (my - b.y) * hx;
+      if (Math.abs(u) < 4.5 && Math.abs(v) < b.half + 1) { mx -= hx * (u + 5.5); my -= hy * (u + 5.5); }
+    }
+    plan.markings.push({ text: m.text, x: mx + hy * 3, y: my - hx * 3, hx, hy });
   }
   for (const s of SIGNS) {
     const [x, y] = offRoad(...toCampus(s.at));
