@@ -5,6 +5,7 @@ import { mat, makeLabel, GEOM } from './models.js';
 import { CORE, OUTER, groundY, heightAtCampus, shrubAt, inCore, roofFor, TREES, STRUCTURES, setTerrainStride } from './terrain.js';
 import { lookFor, wallTexture, wallEdge, planSite, paintSite, BoxBatch, addDetails, addSite, entranceMonument } from './buildings.js';
 import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
+import { PLACE_LABELS, ENCLOSED_STRUCTURES } from './data/places.js';
 import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 import { buildSolarCarports } from './solar.js';
@@ -768,6 +769,18 @@ export class World {
     hl.position.set(hx, cy + 13, hz - 22);
     this.scene.add(hl);
     this.labels.push(hl);
+
+    // Lawns, parking lots and other named places from the university's campus map
+    const BG = { lawn: 'rgba(52,110,58,0.85)', parking: 'rgba(30,70,150,0.85)', place: 'rgba(90,70,45,0.85)' };
+    for (const pl of PLACE_LABELS) {
+      const [x, z] = W(pl.at);
+      const text = pl.name;
+      const sub = pl.kind === 'parking' && !/Parking|Lot/.test(pl.name) ? `Parking ${pl.sub || ''}`.trim() : pl.kind === 'parking' && pl.sub ? `Parking ${pl.sub}` : pl.sub || null;
+      const lbl = makeLabel(text, sub, { width: Math.max(8, Math.min(13, text.length * 0.55)), bg: BG[pl.kind] });
+      lbl.position.set(x, groundY(x, z) + (pl.h ?? (pl.kind === 'parking' ? 4 : 5)), z);
+      this.scene.add(lbl);
+      this.labels.push(lbl);
+    }
   }
 
   // Green street-name signs at intersections, like the real ones
@@ -1149,7 +1162,8 @@ export class World {
       const campus = this.inCampus(x, z);
       q.setFromAxisAngle(up, ang); // local x along the long side
       if (inLot) (this.lotCarports = this.lotCarports || []).push([cx, cy, Math.max(len, wid) / 2]);
-      if (inLot || len > 14) {
+      const enclosed = ENCLOSED_STRUCTURES.some(([ex, ey]) => Math.hypot(ex - cx, ey - cy) < Math.max(len, wid) / 2);
+      if (!enclosed && (inLot || len > 14)) {
         // Open carport / shade canopy: roof on posts, drive under it
         tops.push([m4.compose(v.set(x, gy + h - 0.15, z), q, sc.set(len, 0.3, wid)).clone(), campus && !inLot ? CAMPUS_STYLE.roof : 0x7d7f80]);
         for (const sx of [-0.45, 0.45]) for (const sz of [-0.42, 0.42]) {

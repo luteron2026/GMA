@@ -23,7 +23,7 @@ export const NEEDS = [
 const RIDE_DESTS = [
   ['library', 'Powell Library'], ['chapelDoor', 'the MacArthur Center'], ['grill', 'the Mustang Grill'],
   ['reece', 'the Reese Center'], ['stadium', 'Lou Herwaldt Stadium'], ['placeritos', 'Placeritos Blvd'],
-  ['waldock', 'Waldock Hall'], ['hotchkiss', 'Hotchkiss Hall'], ['gym', 'the Kinesiology Center'], ['westLot', 'the West Lot'],
+  ['waldock', 'Waldock Hall'], ['hotchkiss', 'Hotchkiss Hall'], ['gym', 'the Fitness Center'], ['westLot', 'the West Lot'],
   ['biblical', 'the Biblical Studies Center'], ['music', 'the School of Music'], ['smith', 'C.W. Smith Hall'], ['church', 'Placerita Bible Church'],
 ];
 
