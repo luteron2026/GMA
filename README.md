@@ -7,7 +7,7 @@ It's a GTA-style game played backwards: instead of committing crimes, you do goo
 
 ## Play
 
-When GitHub Pages is on, the game is live at **https://luteron2026.github.io/GTA/** (the URL follows the repo name, so it changes if you rename the repo).
+When GitHub Pages is on, the game is live at **https://luteron2026.github.io/GMA/** (the URL follows the repo name, so it changes if you rename the repo).
 
 Runs in any modern browser on desktop and phone. There's nothing to install and no account.
 
