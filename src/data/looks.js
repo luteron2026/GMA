@@ -15,6 +15,7 @@
 // bay:     color of a dark panel running floor to floor behind each window (the dorms)
 // ac:      a window AC unit under each window; floorBand: a trim band at each floor line
 // windows.frame: frame color when it differs from the trim (white vinyl frames)
+// arcade:  tall stucco arches standing out from both long walls over a walkway (Reese Center)
 
 export const CAMPUS_STYLE = {
   wall: 0xcdb898, // tan/beige stucco
@@ -110,8 +111,9 @@ const FROM_PHOTOS = {
   sweazy: { wall: 0xcdbb98, trim: 0x4a3a2e, siding: 'lap', bay: 0x5a4434, ac: true, stories: 2 },
   waldock: { wall: 0x9e958a, trim: 0x3e352e, siding: 'lap', floorBand: 0x4a3a2e, stories: 3, windows: { shape: 'rect', size: 'medium', arrangement: 'even', tint: 'dark' } },
   smith: { wall: 0xc3b8a6, trim: 0x5a4535, stories: 3, stoneBase: true, windows: { shape: 'rect', size: 'small', arrangement: 'scattered', tint: 'blue' } },
-  // The arcaded Reese Center: sand-colored stucco
-  reece: { wall: 0xcbb48e, trim: 0x6b4f3a },
+  // The Reese Center: sand-colored stucco, and its row of tall arches over a second-floor
+  // walkway with a wood railing along both long sides
+  reece: { wall: 0xcbb48e, trim: 0x6b4f3a, arcade: { rail: 0x7a5a3a } },
   // Ranch-style houses and offices under the oaks
   chancellor: { wall: 0xb59e72, trim: 0x3a2e26, siding: 'batten', stories: 1, windows: { shape: 'rect', size: 'tall', arrangement: 'even', tint: 'dark' } },
   vider: { wall: 0xa9a284, trim: 0x5a4a3a, siding: 'lap', stories: 1, windows: { shape: 'rect', size: 'medium', arrangement: 'scattered', tint: 'dark', frame: 0xf2f0ea } },

@@ -323,6 +323,60 @@ export function addDetails(world, b, look, door, geo, boxes) {
     }
   }
 
+  // The Reese Center's arcade (from the campus map's photos): along both long walls, a row of
+  // tall stucco arches stands out from the building, their legs flaring down to the lawn and
+  // their crowns rising past the eaves, with a covered second-floor walkway and a wood railing
+  // between the arches and the wall
+  if (look.arcade) {
+    const color = look.arcade.color ?? look.wall, rail = look.arcade.rail ?? 0x7a5a3a;
+    const eaves = geo.verts.slice(0, geo.n).map((v) => v[2]).sort((p, q) => p - q);
+    const eave = eaves[Math.floor(eaves.length / 2)];
+    const y0 = ground0 + geo.floorH;
+    const edges = b.poly.map((_, i) => wallEdgeAt(b, i)).filter((e) => e.len > 12).sort((p, q) => q.len - p.len);
+    const picked = edges.slice(0, 1);
+    const opp = edges.find((e) => e !== picked[0] && e.nx * picked[0].nx + e.ny * picked[0].ny < -0.8);
+    if (opp) picked.push(opp);
+    const OUT = 2.6; // arches stand this far out from the wall
+    for (const e of picked) {
+      const a = ang(e.tx, e.ty);
+      const n = Math.max(2, Math.round((e.len - 1) / 4.8)), span = (e.len - 1) / n;
+      const P = (u, o) => [e.ax + e.tx * u + e.nx * o, e.ay + e.ty * u + e.ny * o];
+      const crown = eave + 1.2;
+      for (let k = 0; k < n; k++) {
+        const uc = 0.5 + span * (k + 0.5), half = span / 2;
+        const gl = heightAtCampus(...P(uc, OUT));
+        // the arch: a parabola from ground at each leg up to the crown, in short straight pieces
+        const SEG = 12;
+        let prev = null;
+        for (let s = 0; s <= SEG; s++) {
+          const t = -1 + (2 * s) / SEG;
+          // a round-shouldered arch: steep legs, a broad top
+          const pt = [uc + t * half * 0.96, gl + (crown - 0.6 - gl) * Math.pow(1 - Math.pow(Math.abs(t), 2.4), 0.55)];
+          if (prev) {
+            const du = pt[0] - prev[0], dy = pt[1] - prev[1], L = Math.hypot(du, dy);
+            const [cx, cy] = P((pt[0] + prev[0]) / 2, OUT);
+            // thicker toward the feet, like the buttress legs in the photos
+            const thick = 0.5 + 0.7 * Math.pow(Math.abs(t), 2);
+            boxes.add(color, cx, (pt[1] + prev[1]) / 2, -cy, L + 0.08, thick, 0.7, a, Math.atan2(dy, du));
+          }
+          prev = pt;
+        }
+        const [fx, fy] = P(uc - half, OUT);
+        colliders.addCircle(fx, -fy, 0.6, 'arch', y0);
+      }
+      { const [fx, fy] = P(e.len - 0.5, OUT); colliders.addCircle(fx, -fy, 0.6, 'arch', y0); }
+      // walkway deck, its railing between the legs, and the stucco cover joining the crowns to the wall
+      const [mx, my] = P(e.len / 2, OUT / 2);
+      boxes.add(0x9a8f80, mx, y0 - 0.12, -my, e.len, 0.25, OUT, a);
+      const [rx, ry] = P(e.len / 2, OUT - 0.5);
+      boxes.add(rail, rx, y0 + 1.0, -ry, e.len - 0.6, 0.1, 0.1, a);
+      for (let u = 0.6; u < e.len - 0.5; u += 0.5) { const [px, py] = P(u, OUT - 0.5); boxes.add(rail, px, y0 + 0.5, -py, 0.07, 1.0, 0.07, a); }
+      boxes.add(color, mx, crown - 0.35, -my, e.len, 0.4, OUT + 0.4, a);
+      const [bx, by] = P(e.len / 2, OUT);
+      boxes.add(color, bx, crown - 0.1, -by, e.len, 0.55, 0.75, a); // the band across the arch tops
+    }
+  }
+
   // Stone or brick piers at the corners and along the walls (along the walkway's outer edge
   // when there is one, holding up its cover)
   if (look.piers) {
@@ -538,7 +592,7 @@ function wallEdgeAt(b, i) {
   const len = Math.hypot(bx - ax, by - ay) || 1;
   let nx = (by - ay) / len, ny = -(bx - ax) / len;
   if (pointInPoly((ax + bx) / 2 + nx * 0.3, (ay + by) / 2 + ny * 0.3, p)) { nx = -nx; ny = -ny; }
-  return { nx, ny, tx: (bx - ax) / len, ty: (by - ay) / len };
+  return { nx, ny, tx: (bx - ax) / len, ty: (by - ay) / len, ax, ay, len };
 }
 
 // Fountains, pool furniture and courtyard benches
