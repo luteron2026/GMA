@@ -12,7 +12,7 @@ import { buildSolarCarports } from './solar.js';
 import { planCourts, buildCourts } from './sports.js';
 import { planPitch, paintPitch, buildPitch } from './soccer.js';
 import { planDixonFireplace, DixonFireplace } from './fireplace.js';
-import { buildTrophyCoffee } from './trophy.js';
+import { buildTrophyCoffee, buildTrophyNorth } from './trophy.js';
 import { planGuardShack, buildGuardShack } from './shack.js';
 
 // Convert campus (x east, y north) to world [x, z]
@@ -94,6 +94,7 @@ export class World {
     buildPitch(this, extra);
     this.buildTrophy(extra);
     buildGuardShack(this, extra);
+    buildTrophyNorth(this, extra); // the walk-up window on North Campus
     if (this.fireSpot) this.fireplace = new DixonFireplace(this, this.fireSpot, extra);
     this.buildBackyardPools();
     extra.flush(this.scene, !this.lowSpec);

@@ -8,6 +8,8 @@
 import * as THREE from 'three';
 import { heightAtCampus } from './terrain.js';
 import { mat, GEOM } from './models.js';
+import { toCampus } from './geo.js';
+import { distToPolyline, pointInPoly } from './physics.js';
 
 const BLACK = 0x1b1b1b, WOOD = 0x8a7a68, NAVY = 0x1f2c48, RATTAN = 0x2d4f8a, MARBLE = 0xeeeeea;
 
@@ -253,4 +255,101 @@ export function buildTrophyCoffee(world, boxes) {
     boxes.add(color, cx, gc + 0.5, -cy, 0.5, 1.0, 0.5, wallA);
     boxes.add(0x222222, cx, gc + 1.02, -cy, 0.54, 0.06, 0.54, wallA);
   }
+}
+
+// Trophy North, the walk-up window on North Campus (the campus map's marker and photo): it
+// is set into the Stead Center's short south wall under the big oak, facing the plaza. A navy
+// stucco face with two service windows (ORDER HERE, PICK UP HERE) over a white counter ledge
+// on black brackets, a menu board, a little lantern, a timber shed canopy on braced posts, a
+// black railing at the side, and a stone pillar with a lantern like North Oaks Plaza's
+const TROPHY_NORTH = [34.38506, -118.516546];
+export function buildTrophyNorth(world, boxes) {
+  const b = world.buildings.find((q) => q.id === 'humanities');
+  if (!b) return;
+  const [mx, my] = toCampus(TROPHY_NORTH);
+  // the wall the marker sits on
+  let e = null, bd = Infinity;
+  for (let i = 0; i < b.poly.length; i++) {
+    const [ax, ay] = b.poly[i], [bx, by] = b.poly[(i + 1) % b.poly.length];
+    const len = Math.hypot(bx - ax, by - ay);
+    if (len < 3.5) continue;
+    const d = distToPolyline(mx, my, [[ax, ay], [bx, by]]);
+    if (d < bd) { bd = d; e = { ax, ay, bx, by, len }; }
+  }
+  if (!e || bd > 6) return;
+  let tx = (e.bx - e.ax) / e.len, ty = (e.by - e.ay) / e.len, nx = ty, ny = -tx;
+  const cx0 = (e.ax + e.bx) / 2, cy0 = (e.ay + e.by) / 2;
+  if (pointInPoly(cx0 + nx * 0.5, cy0 + ny * 0.5, b.poly)) { nx = -nx; ny = -ny; }
+  if (tx * ny - ty * nx < 0) { tx = -tx; ty = -ty; } // a runs left to right, seen from outside
+  const P = (a, o) => [cx0 + tx * a + nx * o, cy0 + ty * a + ny * o];
+  const A = Math.atan2(ty, tx), face = Math.atan2(nx, -ny);
+  const scene = world.scene, shadows = !world.lowSpec;
+  const g = heightAtCampus(...P(0, 1));
+  const W = Math.min(4.6, e.len - 0.3);
+  const plane = (w, h, material, a, o, y) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
+    const [x, yy] = P(a, o); m.position.set(x, g + y, -yy); m.rotation.y = face; scene.add(m); return m;
+  };
+  // navy stucco face
+  plane(W, 3.1, new THREE.MeshLambertMaterial({ map: sidingTexture(W, 3.1) }), 0, 0.06, 1.55);
+  // service windows (green-gray glass, black frames), signs over them, the ledge below
+  const glass = new THREE.MeshLambertMaterial({ color: 0x5f7a74, emissive: 0x1a2a26 });
+  const sign = (text) => {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#f4f2ec'; ctx.fillRect(0, 0, 256, 64);
+    ctx.fillStyle = '#1b1b1b'; ctx.font = 'bold 30px "Helvetica Neue", Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, 128, 34, 240);
+    return new THREE.MeshLambertMaterial({ map: canvasTex(c) });
+  };
+  for (const [a, text] of [[-0.2, 'ORDER HERE!'], [1.2, 'PICK UP HERE!']]) {
+    plane(0.95, 0.95, glass, a, 0.09, 1.65);
+    const [fx, fy] = P(a, 0.1);
+    for (const dy of [1.15, 2.15]) boxes.add(BLACK, fx, g + dy, -fy, 1.05, 0.07, 0.06, A);
+    for (const da of [-0.5, 0.5]) { const [sx, sy] = P(a + da, 0.1); boxes.add(BLACK, sx, g + 1.65, -sy, 0.07, 1.05, 0.06, A); }
+    plane(0.75, 0.18, sign(text), a, 0.1, 2.38);
+  }
+  { const [lx, ly] = P(0.5, 0.25); boxes.add(0xf2f0ea, lx, g + 1.1, -ly, W - 0.4, 0.06, 0.45, A); }
+  for (const a of [-1.4, 0.5, 1.9]) { const [kx, ky] = P(a, 0.2); boxes.add(BLACK, kx, g + 0.98, -ky, 0.04, 0.2, 0.3, A); }
+  // the menu board at the left: rows of drinks on a pale board in a wood frame
+  {
+    const c = document.createElement('canvas'); c.width = 160; c.height = 200;
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#7a5a3a'; ctx.fillRect(0, 0, 160, 200);
+    ctx.fillStyle = '#efece4'; ctx.fillRect(8, 8, 144, 184);
+    ctx.fillStyle = '#2a2a2a';
+    for (let k = 0; k < 14; k++) ctx.fillRect(16, 18 + k * 12.5, 70 + ((k * 37) % 40), 4);
+    for (let k = 0; k < 14; k++) ctx.fillRect(128, 18 + k * 12.5, 16, 4);
+    plane(0.85, 1.05, new THREE.MeshLambertMaterial({ map: canvasTex(c) }), -1.65, 0.1, 1.75);
+  }
+  // a little lantern over the windows
+  { const [lx, ly] = P(0.5, 0.18); boxes.add(0x6b4f33, lx, g + 2.72, -ly, 0.16, 0.24, 0.16, A); const bulb = new THREE.Mesh(GEOM.sphere, new THREE.MeshBasicMaterial({ color: 0xffe2a8 })); bulb.scale.setScalar(0.1); bulb.position.set(lx, g + 2.66, -ly); scene.add(bulb); }
+  // the timber shed canopy: two posts with knee braces, a beam, rafters and a sloped roof
+  const T = 0x7a5a3e, OUT = 2.3, top = 3.1;
+  for (const a of [-W / 2 + 0.25, W / 2 - 0.25]) {
+    const [px, py] = P(a, OUT); const gp = heightAtCampus(px, py);
+    boxes.add(T, px, (gp + g + top) / 2, -py, 0.18, g + top - gp, 0.18, A);
+    world.colliders.addCircle(px, -py, 0.18, 'post', g + top);
+    const [bx, by] = P(a, OUT - 0.4); boxes.add(T, bx, g + top - 0.45, -by, 0.1, 0.1, 0.9, A, 0, Math.PI / 4);
+  }
+  { const [bx, by] = P(0, OUT); boxes.add(T, bx, g + top + 0.05, -by, W + 0.4, 0.22, 0.16, A); }
+  for (let a = -W / 2; a <= W / 2 + 0.01; a += W / 4) { const [rx, ry] = P(a, OUT / 2); boxes.add(T, rx, g + top + 0.3, -ry, 0.1, 0.16, OUT + 0.6, A, 0, -0.12); }
+  {
+    const [rx, ry] = P(0, OUT / 2 + 0.05);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.06, OUT + 0.7), mat(0x5a4636));
+    roof.position.set(rx, g + top + 0.42, -ry); roof.rotation.order = 'YXZ'; roof.rotation.y = A; roof.rotation.x = 0.12 * Math.sign(Math.cos(A) * ny - Math.sin(A) * nx || 1);
+    roof.castShadow = shadows; scene.add(roof);
+  }
+  // black railing at the right side, and the stone pillar with its lantern beyond it
+  for (let o = 0.4; o <= 2.2; o += 0.12) { const [rx, ry] = P(W / 2 + 0.3, o); boxes.add(0x1b1b1b, rx, g + 0.5, -ry, 0.025, 1.0, 0.025, A); }
+  for (const h of [0.08, 1.0]) { const [rx, ry] = P(W / 2 + 0.3, 1.3); boxes.add(0x1b1b1b, rx, g + h, -ry, 0.04, 0.05, 1.9, A); }
+  {
+    const [sx, sy] = P(W / 2 + 0.9, OUT + 0.4), gs = heightAtCampus(sx, sy);
+    const STONES = [0x8a7f72, 0x6f6457, 0x9a8a72, 0x5e544a];
+    for (let k = 0; k < 3; k++) boxes.add(STONES[k], sx, gs + 0.2 + k * 0.4, -sy, 0.6, 0.4, 0.6, A);
+    boxes.add(0xcfc7b6, sx, gs + 1.25, -sy, 0.7, 0.1, 0.7, A);
+    boxes.add(0x6b4f33, sx, gs + 1.5, -sy, 0.34, 0.4, 0.34, A);
+    boxes.add(0xffe2a8, sx, gs + 1.5, -sy, 0.26, 0.3, 0.26, A);
+    const capm = new THREE.Mesh(GEOM.cone4, mat(0x6b4f33)); capm.scale.set(0.6, 0.25, 0.6); capm.position.set(sx, gs + 1.82, -sy); capm.rotation.y = A + Math.PI / 4; scene.add(capm);
+    world.colliders.addCircle(sx, -sy, 0.4, 'pillar', gs + 1.9);
+  }
+  world.places.trophyNorth = [P(-0.2, 1.3)[0], -P(-0.2, 1.3)[1]];
 }

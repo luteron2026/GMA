@@ -571,6 +571,11 @@ export class Game {
         '🚓 "Yes, the golf cart is ours. No, you may not borrow it. ...Fine, ask nicely."',
       ][Math.floor(Math.random() * 4)]) };
     }
+    // Trophy North's walk-up window
+    const tn = this.world.places.trophyNorth;
+    if (!p.vehicle && tn && Math.hypot(tn[0] - p.x, tn[1] - p.z) < 2.2) {
+      return { text: '☕ Order at <b>Trophy North</b> (5 Chapel Credits)', fn: () => this.buyCoffee() };
+    }
     // Trophy Coffee
     const tc = this.world.places.trophy;
     if (!p.vehicle && tc && Math.hypot(tc[0] - p.x, tc[1] - p.z) < 4) {

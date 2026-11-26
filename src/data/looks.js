@@ -53,7 +53,9 @@ export const LOOKS = {
   library: {
     wall: 0xa88a6e, trim: 0x4a3a2e, roof: 0x6e5a50, stories: 2,
     windows: { shape: 'rect', size: 'tall', arrangement: 'even', tint: 'dark' },
-    fountain: { at: [34.38200, -118.51800], bollards: true }, // central plaza, lawn and oaks around it
+    // the round stone fountain on the plaza in front of Rutherford's entrance (placed on the
+    // aerial photo; its look and the flagpole beside it from the campus map's photos)
+    fountain: { at: [34.382016, -118.518230], style: 'stone', plaza: 7, flag: { angle: 2.9 } },
   },
   // The pool north of Hotchkiss, measured on the USDA aerial photo: the water (13.7 x 6.3 m),
   // the deck from the pool house at its west end to the trees on the east, with the wide side
@@ -129,6 +131,11 @@ const FROM_PHOTOS = {
   library: { wall: 0xd2bd92, piers: 'stone', porch: 'gable' },
   // The Plew music building around the recital hall: yellow-tan stucco, brick pilasters with
   // cypress between them, a second-floor walkway with a black railing
+  // North Campus: the Business Center's stacked-stone entrance piers, black-railed upper walkway
+  // and navy sign; the Stead Center's warm tan stucco (its walk-up Trophy North window is in
+  // trophy.js)
+  business: { wall: 0xcaa978, trim: 0x4a3a2e, piers: 'stone', balcony: { rail: 0x1e1e1e }, stories: 2, sign: { base: 'wall', text: 'School of Business & Communication' } },
+  humanities: { wall: 0xd0b483, trim: 0x4a3a2e, stories: 2 },
   music: { wall: 0xd6bf8a, trim: 0x5a3e2e, piers: 'brick', balcony: { rail: 0x1e1e1e }, stories: 2 },
 };
 for (const [id, look] of Object.entries(FROM_PHOTOS)) LOOKS[id] = { ...(LOOKS[id] || {}), ...look };

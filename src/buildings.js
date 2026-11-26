@@ -136,7 +136,7 @@ export function planSite(world) {
     if (!L) continue;
     if (L.fountain && L.fountain.at) {
       const [x, y] = toCampus(L.fountain.at);
-      site.fountains.push({ x, y, plaza: 8, bollards: !!L.fountain.bollards });
+      site.fountains.push({ x, y, plaza: L.fountain.plaza ?? 8, bollards: !!L.fountain.bollards, style: L.fountain.style, flag: L.fountain.flag });
     } else if (L.fountain) {
       const e = L.fountain.side === 'door' ? wallEdge(b, { target: b.door }) : wallEdge(b, { dir: DIRS[L.fountain.side] });
       if (e) {
@@ -595,10 +595,77 @@ function wallEdgeAt(b, i) {
   return { nx, ny, tx: (bx - ax) / len, ty: (by - ay) / len, ax, ay, len };
 }
 
+// The round fountain in front of Rutherford, from the campus map's photos: a low stacked-stone
+// basin wall with a pale cap, a rough stone pedestal in the middle carrying a round bowl that
+// spills into the pool, a terracotta paving ring (painted in surfaces.js), wooden benches
+// around the plaza, and the flagpole with the American flag beside it
+let ledgerTex = null;
+function stoneFountain(world, f, boxes) {
+  const scene = world.scene, colliders = world.colliders;
+  const g = heightAtCampus(f.x, f.y);
+  if (!ledgerTex) {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#4a433b'; ctx.fillRect(0, 0, 256, 64);
+    let seed = 3; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const tones = ['#8b7d6b', '#6f6457', '#a39380', '#5e544a', '#9a8a72', '#7b6e60', '#b09d84'];
+    for (let y = 0; y < 64;) { const h = 5 + rnd() * 8; for (let x = -rnd() * 30; x < 256;) { const w = 14 + rnd() * 36; ctx.fillStyle = tones[Math.floor(rnd() * tones.length)]; ctx.fillRect(x + 1, y + 1, w - 2, h - 2); x += w; } y += h; }
+    ledgerTex = new THREE.CanvasTexture(c); ledgerTex.colorSpace = THREE.SRGBColorSpace;
+    ledgerTex.wrapS = THREE.RepeatWrapping; ledgerTex.repeat.set(6, 1);
+  }
+  const R = 3.0, H = 0.75;
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(R, R + 0.05, H, 40, 1, true), new THREE.MeshLambertMaterial({ map: ledgerTex }));
+  wall.position.set(f.x, g + H / 2, -f.y); scene.add(wall);
+  const inner = new THREE.Mesh(new THREE.CylinderGeometry(R - 0.4, R - 0.4, H, 40, 1, true), new THREE.MeshLambertMaterial({ map: ledgerTex, side: THREE.BackSide }));
+  inner.position.copy(wall.position); scene.add(inner);
+  const cap = new THREE.Mesh(new THREE.RingGeometry(R - 0.45, R + 0.1, 40), mat(0xd8d0bf, { side: THREE.DoubleSide }));
+  cap.rotation.x = -Math.PI / 2; cap.position.set(f.x, g + H + 0.01, -f.y); scene.add(cap);
+  const water = new THREE.Mesh(new THREE.CircleGeometry(R - 0.4, 40), mat(0x4a8fc4, { emissive: 0x0a1a2a }));
+  water.rotation.x = -Math.PI / 2; water.position.set(f.x, g + H - 0.15, -f.y); scene.add(water);
+  // the rough stone pedestal and the bowl, with a sheet of water spilling round its rim
+  const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.85, 1.3, 8), mat(0x8a7f72, { flatShading: true }));
+  ped.position.set(f.x, g + H - 0.15 + 0.65, -f.y); scene.add(ped);
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 0.45, 0.4, 24), mat(0xcfc6b4));
+  bowl.position.set(f.x, g + H + 1.35, -f.y); scene.add(bowl);
+  const pool = new THREE.Mesh(new THREE.CircleGeometry(1.02, 24), mat(0x5a9fd0, { emissive: 0x10283a }));
+  pool.rotation.x = -Math.PI / 2; pool.position.set(f.x, g + H + 1.56, -f.y); scene.add(pool);
+  const spill = new THREE.Mesh(new THREE.CylinderGeometry(1.18, 1.3, 1.2, 24, 1, true), new THREE.MeshLambertMaterial({ color: 0xcfe6f4, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+  spill.position.set(f.x, g + H + 0.95, -f.y); scene.add(spill);
+  colliders.addCircle(f.x, -f.y, R + 0.1, 'fountain', g + H);
+  // wooden benches round the plaza, facing the fountain
+  for (const a of [0.5, 1.5, 2.6, 3.7]) {
+    const x = f.x + Math.cos(a) * (f.plaza - 1.3), y = f.y + Math.sin(a) * (f.plaza - 1.3), gb = heightAtCampus(x, y);
+    if (world.buildings.some((b) => b.poly && pointInPoly(x, y, b.poly))) continue;
+    const ry = Math.atan2(Math.sin(a + Math.PI / 2), Math.cos(a + Math.PI / 2));
+    const ox = Math.cos(a) * 0.25, oy = Math.sin(a) * 0.25;
+    boxes.add(0x8a5a32, x, gb + 0.45, -y, 1.8, 0.07, 0.45, ry);
+    boxes.add(0x8a5a32, x + ox, gb + 0.78, -(y + oy), 1.8, 0.35, 0.06, ry);
+    for (const s of [-0.75, 0.75]) boxes.add(0x2b2b2b, x + Math.cos(a + Math.PI / 2) * s, gb + 0.22, -(y + Math.sin(a + Math.PI / 2) * s), 0.06, 0.44, 0.45, ry);
+    colliders.addCircle(x, -y, 0.5, 'bench', gb + 0.9);
+  }
+  // the flagpole with the American flag, just off the plaza
+  if (f.flag) {
+    const a = f.flag.angle ?? 2.9;
+    const x = f.x + Math.cos(a) * (f.plaza + 1.2), y = f.y + Math.sin(a) * (f.plaza + 1.2), gp = heightAtCampus(x, y);
+    boxes.add(0xe8e8e8, x, gp + 5, -y, 0.14, 10, 0.14, 0);
+    boxes.add(0xd4af37, x, gp + 10.05, -y, 0.22, 0.22, 0.22, 0);
+    const c = document.createElement('canvas'); c.width = 190; c.height = 100;
+    const ctx = c.getContext('2d');
+    for (let i = 0; i < 13; i++) { ctx.fillStyle = i % 2 ? '#f4f1ea' : '#b22234'; ctx.fillRect(0, i * 100 / 13, 190, 100 / 13 + 0.5); }
+    ctx.fillStyle = '#3c3b6e'; ctx.fillRect(0, 0, 76, 54);
+    ctx.fillStyle = '#fff'; for (let i = 0; i < 9; i++) for (let j = 0; j < (i % 2 ? 5 : 6); j++) ctx.fillRect(5 + j * 12 + (i % 2) * 6, 4 + i * 5.5, 2.4, 2.4);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 1.0), new THREE.MeshLambertMaterial({ map: t, side: THREE.DoubleSide }));
+    flag.position.set(x + 1.0, gp + 9.4, -y); scene.add(flag);
+    colliders.addCircle(x, -y, 0.2, 'flagpole', gp + 10.2);
+  }
+}
+
 // Fountains, pool furniture and courtyard benches
 export function addSite(world, site, boxes) {
   const scene = world.scene, colliders = world.colliders;
   for (const f of site.fountains) {
+    if (f.style === 'stone') { stoneFountain(world, f, boxes); continue; }
     const g = heightAtCampus(f.x, f.y);
     const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3, 0.7, 24), mat(0xcfc6b4));
     basin.position.set(f.x, g + 0.3, -f.y); scene.add(basin);
