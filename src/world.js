@@ -5,7 +5,7 @@ import { mat, makeLabel, GEOM } from './models.js';
 import { CORE, OUTER, groundY, heightAtCampus, shrubAt, inCore, roofFor, TREES, STRUCTURES, setTerrainStride } from './terrain.js';
 import { lookFor, wallTexture, wallEdge, planSite, paintSite, BoxBatch, addDetails, addSite, entranceMonument } from './buildings.js';
 import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
-import { PLACE_LABELS, ENCLOSED_STRUCTURES } from './data/places.js';
+import { PLACE_LABELS, ENCLOSED_STRUCTURES, GAZEBOS } from './data/places.js';
 import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 import { buildSolarCarports } from './solar.js';
@@ -1164,6 +1164,10 @@ export class World {
         const [px, pz] = at(a * len, b * wid);
         return this.roads.some((r) => r.kind !== 'trail' && distToPolyline(px, pz, r.wpts) < r.width / 2 + 0.3);
       })) continue;
+      if (GAZEBOS.some(([ex, ey]) => Math.hypot(ex - cx, ey - cy) < Math.max(len, wid) / 2)) {
+        this.buildGazebo(cx, cy, Math.min(len, wid) / 2, h, ang);
+        continue;
+      }
       const campus = this.inCampus(x, z);
       q.setFromAxisAngle(up, ang); // local x along the long side
       if (inLot) (this.lotCarports = this.lotCarports || []).push([cx, cy, Math.max(len, wid) / 2]);
@@ -1195,6 +1199,63 @@ export class World {
       inst.castShadow = !this.lowSpec; inst.receiveShadow = true;
       this.scene.add(inst);
     }
+  }
+
+  // An open octagonal gazebo: concrete pad, timber columns with a low rail between them
+  // (open on two sides), an eight-sided shingle roof and a little cupola on top. r is the
+  // distance to the middle of a side, top the LiDAR height of the cupola.
+  buildGazebo(cx, cy, r, top, ang) {
+    const boxes = new BoxBatch();
+    const [x, z] = W([cx, cy]);
+    const g = groundY(x, z);
+    const R = r / Math.cos(Math.PI / 8); // to a corner
+    const eave = Math.max(2.8, Math.min(3.4, top * 0.55));
+    const timber = CAMPUS_STYLE.timber, cream = 0xe8dcc4;
+    // Columns sit at the corners, a little in from the roof edge; ry turns the octagon to the
+    // LiDAR footprint (a cone8's first corner is on +z)
+    const ry = ang + Math.PI / 8;
+    const corner = (k, rad) => { const t = ry + (k * Math.PI) / 4; return [x + rad * Math.sin(t), z + rad * Math.cos(t)]; };
+    // Pad, a step up from the lawn
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(R - 0.3, R - 0.2, 0.5, 8), mat(0xcfc8b8));
+    pad.position.set(x, g + 0.05, z); pad.rotation.y = ry; pad.receiveShadow = true;
+    this.scene.add(pad);
+    const floor = g + 0.3;
+    for (let k = 0; k < 8; k++) {
+      const [px, pz] = corner(k, R - 0.9);
+      boxes.add(timber, px, floor + (eave - floor + g) / 2, pz, 0.32, eave - (floor - g), 0.32, ry + (k * Math.PI) / 4);
+      boxes.add(CAMPUS_STYLE.stone, px, floor + 0.3, pz, 0.55, 0.6, 0.55, ry + (k * Math.PI) / 4);
+      this.colliders.addCircle(px, pz, 0.3, 'post', g + eave);
+      // Beam to the next column, and a rail below on all but the two entrance sides
+      const [qx, qz] = corner(k + 1, R - 0.9);
+      const L = Math.hypot(qx - px, qz - pz), a = Math.atan2(-(qz - pz), qx - px);
+      const mx = (px + qx) / 2, mz = (pz + qz) / 2;
+      boxes.add(timber, mx, g + eave - 0.15, mz, L, 0.3, 0.22, a);
+      if (k % 4 !== 0) {
+        boxes.add(cream, mx, floor + 0.85, mz, L, 0.1, 0.12, a);
+        for (let t = 0.15; t < 1; t += 0.14) boxes.add(cream, px + (qx - px) * t, floor + 0.45, pz + (qz - pz) * t, 0.06, 0.8, 0.06, a);
+        const nx = (qz - pz) / L * 0.1, nz = -(qx - px) / L * 0.1;
+        this.colliders.addPoly([[px - nx, pz - nz], [qx - nx, qz - nz], [qx + nx, qz + nz], [px + nx, pz + nz]], 'fence', floor + 1);
+      }
+    }
+    // Benches inside along the railed sides
+    for (const k of [2, 6]) {
+      const t = ry + ((k + 0.5) * Math.PI) / 4;
+      const bx = x + (r - 1.6) * Math.sin(t), bz = z + (r - 1.6) * Math.cos(t);
+      boxes.add(0x8b6a4e, bx, floor + 0.45, bz, 2.6, 0.08, 0.45, t);
+    }
+    boxes.flush(this.scene, !this.lowSpec);
+    // Roof: eight shingled faces up from the eave, then a cupola
+    const roofH = Math.max(1.6, top - eave - 0.9);
+    const roof = new THREE.Mesh(GEOM.cone8, mat(CAMPUS_STYLE.roof));
+    roof.scale.set(R * 2 + 0.8, roofH, R * 2 + 0.8); roof.rotation.y = ry;
+    roof.position.set(x, g + eave + roofH / 2, z); roof.castShadow = !this.lowSpec;
+    this.scene.add(roof);
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.6, 8), mat(cream));
+    drum.position.set(x, g + eave + roofH * 0.82 + 0.2, z); drum.rotation.y = ry;
+    this.scene.add(drum);
+    const cap = new THREE.Mesh(GEOM.cone8, mat(CAMPUS_STYLE.roof));
+    cap.scale.set(1.5, 0.7, 1.5); cap.position.set(x, g + eave + roofH * 0.82 + 0.85, z); cap.rotation.y = ry;
+    this.scene.add(cap);
   }
 
   // ---------- traffic ----------

@@ -50,7 +50,13 @@ export const LOOKS = {
     windows: { shape: 'rect', size: 'tall', arrangement: 'even', tint: 'dark' },
     fountain: { at: [34.38200, -118.51800], bollards: true }, // central plaza, lawn and oaks around it
   },
-  hotchkiss: { roof: 0x6f5c54, pool: { side: 'N' } },
+  // The pool north of Hotchkiss, measured on the USDA aerial photo: the water (13.7 x 6.3 m),
+  // the deck from the pool house at its west end to the trees on the east, with the wide side
+  // and its shade canopy toward Placerita (pool frame: u along the pool, v across it)
+  hotchkiss: {
+    roof: 0x6f5c54,
+    pool: { at: [34.382082, -118.519756], size: [13.7, 6.3], heading: -11.3, deck: [-16.1, 8.6, -4.8, 10.4], shade: [-14.6, 7.2, 6.9, 10.0], gate: [-10, -4.8], open: 'W' },
+  },
   slight: { roof: 0x7c7f83 },
   chancellor: { roof: 0x6e5a52 },
   vider: { roof: 0x6b5850 },
