@@ -1,13 +1,15 @@
-// Trophy Coffee: a modern-farmhouse coffee shop front on the south end of the MacArthur
-// Center. White board-and-batten siding, black steel windows looking into a warm, lit cafe
-// (counter, espresso machine, pastry case, chalk menus, pendant lights), a flat steel awning
-// on tie rods, gooseneck barn lamps over the sign, and a patio with farm tables, market
-// umbrellas, bistro tables, planters and string lights.
+// Trophy Coffee, on the south end of the MacArthur Center, from the photos on the
+// university's campus map: a deep navy stucco front with TROPHY in big white letters under a
+// little gold star and COFFEE below, black steel doors and windows looking into the white cafe
+// (teal cabinets, white brick, the flag over the bar), a navy-and-white striped awning, and a
+// patio of navy market umbrellas, white marble bistro tables with blue-and-white rattan
+// chairs, picnic tables, and stacked-stone piers carrying a timber pergola along the front.
+// Walk in through the doors: the inside is in interiors.js.
 import * as THREE from 'three';
 import { heightAtCampus } from './terrain.js';
 import { mat, GEOM } from './models.js';
 
-const BLACK = 0x1b1b1b, WOOD = 0x9a7350, CREAM = 0xefe8d8, OLIVE = 0x8a9a6a;
+const BLACK = 0x1b1b1b, WOOD = 0x8a7a68, NAVY = 0x1f2c48, RATTAN = 0x2d4f8a, MARBLE = 0xeeeeea;
 
 function canvasTex(c, repeat) {
   const t = new THREE.CanvasTexture(c);
@@ -17,17 +19,26 @@ function canvasTex(c, repeat) {
   return t;
 }
 
-// One meter of white board-and-batten siding
+// One meter of deep navy stucco
 function sidingTexture(w, h) {
   const c = document.createElement('canvas');
   c.width = 128; c.height = 128;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#f3f1eb'; ctx.fillRect(0, 0, 128, 128);
-  for (let x = 0; x < 128; x += 51.2) {
-    ctx.fillStyle = 'rgba(0,0,0,0.10)'; ctx.fillRect(x + 7, 0, 3, 128); // shadow beside the batten
-    ctx.fillStyle = '#fbfaf6'; ctx.fillRect(x, 0, 7, 128);
-  }
+  ctx.fillStyle = '#22304e'; ctx.fillRect(0, 0, 128, 128);
+  let seed = 5;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 1400; i++) { ctx.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.05)'; ctx.fillRect(rnd() * 128, rnd() * 128, 2, 2); }
   return canvasTex(c, [w, h]);
+}
+
+// Navy-and-white awning stripes, 0.3 m each
+function stripeTexture(w) {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 16;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f2f0ea'; ctx.fillRect(0, 0, 64, 16);
+  ctx.fillStyle = '#1f2c48'; ctx.fillRect(0, 0, 32, 16);
+  return canvasTex(c, [w / 0.6, 1]);
 }
 
 // The lit cafe seen through the windows: spans 8.8 m x 3.0 m of storefront
@@ -37,32 +48,27 @@ function interiorTexture() {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   const Y = (h) => H - h * m; // meters above the ground -> canvas y
-  // Back wall: warm white shiplap, a wood-plank accent wall in the middle
-  ctx.fillStyle = '#efe3cf'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = 'rgba(120,90,60,0.12)';
-  for (let y = 4; y < H; y += 14) ctx.fillRect(0, y, W, 1.5);
-  ctx.fillStyle = '#b48a63'; ctx.fillRect(330, 0, 360, Y(1.0));
-  for (let y = 0; y < Y(1.0); y += 18) { ctx.fillStyle = `rgba(60,35,15,${0.12 + ((y * 7) % 5) * 0.03})`; ctx.fillRect(330, y, 360, 2); }
-  // Chalk menu boards
-  for (const [x, w] of [[350, 100], [460, 100], [570, 100]]) {
-    ctx.fillStyle = '#202322'; ctx.fillRect(x, 40, w, 92);
-    ctx.strokeStyle = '#7a5a3a'; ctx.lineWidth = 4; ctx.strokeRect(x, 40, w, 92);
-    ctx.fillStyle = 'rgba(240,240,235,0.85)';
-    ctx.font = 'bold 13px Georgia, serif'; ctx.textAlign = 'center';
-    ctx.fillText(['ESPRESSO', 'COLD BREW', 'BAKERY'][(x - 350) / 110], x + w / 2, 58);
-    for (let k = 0; k < 5; k++) ctx.fillRect(x + 10, 70 + k * 11, w - 34 - ((k * 13) % 20), 2.5);
+  // Back wall: white, with white-painted brick behind the bar and its black barn sconces
+  ctx.fillStyle = '#f2f1ed'; ctx.fillRect(0, 0, W, H);
+  for (let y = 0; y < Y(1.0); y += 12) for (let x = (y / 12) % 2 ? 0 : 24; x < 690; x += 48) {
+    ctx.fillStyle = `rgba(150,145,135,${0.10 + ((x * 7 + y) % 5) * 0.02})`; ctx.fillRect(330 + (x % 360), y, 46, 1.5);
   }
-  // Shelves with coffee bags and plants on the left and right walls
+  for (let y = 0; y < Y(1.0); y += 12) { ctx.fillStyle = 'rgba(150,145,135,0.18)'; ctx.fillRect(330, y, 360, 1.5); }
+  for (const x of [390, 450, 510]) { ctx.fillStyle = '#151515'; ctx.fillRect(x - 3, 70, 6, 14); ctx.beginPath(); ctx.moveTo(x - 14, 98); ctx.lineTo(x, 80); ctx.lineTo(x + 14, 98); ctx.fill(); ctx.fillStyle = 'rgba(255,225,160,0.9)'; ctx.fillRect(x - 5, 98, 10, 5); }
+  // The flag over the bar, and black metal shelving with plants and bags of beans at the sides
+  for (let i = 0; i < 7; i++) { ctx.fillStyle = i % 2 ? '#f4f1ea' : '#b22234'; ctx.fillRect(600, 30 + i * 9, 60, 9); }
+  ctx.fillStyle = '#3c3b6e'; ctx.fillRect(600, 30, 26, 32);
   for (const sx of [40, 800]) {
+    ctx.fillStyle = '#151515'; ctx.fillRect(sx, 20, 4, Y(0.25) - 20); ctx.fillRect(sx + 156, 20, 4, Y(0.25) - 20);
     for (let k = 0; k < 3; k++) {
       const y = 70 + k * 55;
-      ctx.fillStyle = '#7a5434'; ctx.fillRect(sx, y, 160, 6);
-      for (let b = 0; b < 6; b++) {
-        ctx.fillStyle = ['#2b2b2b', '#c9a227', '#f1ece0', '#2b2b2b', '#8a5a3a', '#f1ece0'][(b + k) % 6];
-        ctx.fillRect(sx + 8 + b * 25, y - 30, 18, 30);
+      ctx.fillStyle = '#151515'; ctx.fillRect(sx, y, 160, 4);
+      for (let b = 0; b < 5; b++) {
+        ctx.fillStyle = ['#2b2b2b', '#c9a227', '#f1ece0', '#1f2c48', '#f1ece0'][(b + k) % 5];
+        ctx.fillRect(sx + 10 + b * 28, y - 28, 18, 28);
       }
     }
-    ctx.fillStyle = '#5f7f45'; ctx.beginPath(); ctx.arc(sx + 140, 40, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#4f7a3a'; ctx.beginPath(); ctx.arc(sx + 80, 30, 26, 0, Math.PI * 2); ctx.fill();
   }
   // Pendant lights: black cords and dome shades with glowing bulbs
   for (let k = 0; k < 6; k++) {
@@ -81,10 +87,10 @@ function interiorTexture() {
     ctx.fillStyle = shirt; ctx.fillRect(x - 20, top + 28, 40, 90);
     if (apron) { ctx.fillStyle = apron; ctx.fillRect(x - 15, top + 45, 30, 73); }
   };
-  person(520, Y(1.95), '#f1ece0', '#222');
-  // Counter: white quartz top on a wood front, with the espresso machine and pastry case
-  ctx.fillStyle = '#7d5638'; ctx.fillRect(170, Y(1.05), 680, Y(0.25) - Y(1.05));
-  for (let x = 170; x < 850; x += 22) { ctx.fillStyle = 'rgba(40,20,5,0.18)'; ctx.fillRect(x, Y(1.05), 2, Y(0.25) - Y(1.05)); }
+  person(520, Y(1.95), '#1f2c48', '#222');
+  // Counter: white top on deep-teal cabinets, with the espresso machine and pastry case
+  ctx.fillStyle = '#2e5a60'; ctx.fillRect(170, Y(1.05), 680, Y(0.25) - Y(1.05));
+  for (let x = 170; x < 850; x += 68) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x, Y(1.05), 3, Y(0.25) - Y(1.05)); ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 2; ctx.strokeRect(x + 10, Y(0.95), 48, Y(0.35) - Y(0.95)); }
   ctx.fillStyle = '#f6f4ee'; ctx.fillRect(160, Y(1.12), 700, 9);
   ctx.fillStyle = '#c8ccd0'; ctx.fillRect(250, Y(1.6), 120, Y(1.12) - Y(1.6)); // espresso machine
   ctx.fillStyle = '#2b2b2b'; ctx.fillRect(250, Y(1.6), 120, 10); ctx.fillRect(262, Y(1.3), 96, 8);
@@ -94,8 +100,8 @@ function interiorTexture() {
   for (let k = 0; k < 6; k++) { ctx.fillStyle = ['#d49a4a', '#b5652f', '#e8c27a'][k % 3]; ctx.beginPath(); ctx.ellipse(630 + k * 22, Y(1.25), 9, 6, 0, 0, Math.PI * 2); ctx.fill(); }
   ctx.fillStyle = '#2b2b2b'; ctx.fillRect(790, Y(1.38), 34, Y(1.12) - Y(1.38)); // register
   person(880, Y(1.8), '#2f5d8a');
-  // Dark wood floor
-  ctx.fillStyle = '#5a3f2b'; ctx.fillRect(0, Y(0.25), W, H);
+  // Polished concrete floor
+  ctx.fillStyle = '#bdbcb6'; ctx.fillRect(0, Y(0.25), W, H);
   // Glass: a cool sky reflection at the top and a couple of diagonal glints
   const sky = ctx.createLinearGradient(0, 0, 0, H);
   sky.addColorStop(0, 'rgba(170,200,225,0.35)'); sky.addColorStop(0.5, 'rgba(170,200,225,0.08)'); sky.addColorStop(1, 'rgba(170,200,225,0.0)');
@@ -117,15 +123,14 @@ function signTexture() {
   c.width = 1024; c.height = 220;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, 1024, 220);
-  // Black cut-metal letters with a little trophy cup, mounted straight on the siding
-  ctx.fillStyle = '#161616';
-  ctx.beginPath(); ctx.moveTo(60, 48); ctx.lineTo(160, 48); ctx.quadraticCurveTo(155, 133, 110, 138); ctx.quadraticCurveTo(65, 133, 60, 48); ctx.fill();
-  ctx.fillRect(102, 136, 16, 30); ctx.fillRect(78, 164, 64, 14);
-  ctx.lineWidth = 9; ctx.strokeStyle = '#161616';
-  ctx.beginPath(); ctx.arc(60, 78, 22, Math.PI * 0.5, Math.PI * 1.5); ctx.stroke();
-  ctx.beginPath(); ctx.arc(160, 78, 22, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
-  ctx.font = 'bold 112px Georgia, "Times New Roman", serif'; ctx.textBaseline = 'middle';
-  ctx.fillText('TROPHY COFFEE', 205, 112, 800);
+  // Painted white letters: a little star, TROPHY in tall heavy capitals, COFFEE spaced out below
+  ctx.fillStyle = '#c9a227'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 34px serif'; ctx.fillText('★', 512, 20);
+  ctx.fillStyle = '#f4f2ec';
+  ctx.font = 'bold 120px "Arial Black", Impact, "Helvetica Neue", sans-serif';
+  ctx.fillText('TROPHY', 512, 100, 600);
+  ctx.font = 'bold 40px "Helvetica Neue", Arial, sans-serif';
+  ctx.fillText('C  O  F  F  E  E', 512, 185);
   return canvasTex(c);
 }
 
@@ -166,25 +171,30 @@ export function buildTrophyCoffee(world, boxes) {
   for (const a of [-0.92, 0, 0.92]) { const [x, y] = P(a, 0.13); boxes.add(BLACK, x, g + 1.22, -y, 0.08, 2.45, 0.08, wallA); }
   { const [x, y] = P(0, 0.13); boxes.add(BLACK, x, g + 0.08, -y, 1.9, 0.16, 0.1, wallA); }
   for (const a of [-0.18, 0.18]) { const [x, y] = P(a, 0.22); boxes.add(0xc9a227, x, g + 1.15, -y, 0.04, 0.9, 0.04, wallA); }
-  // Flat black steel awning on tie rods
+  // Navy-and-white striped fabric awning over the windows, on a black frame, with a valance
   {
-    const [x, y] = P(0, 0.8);
-    boxes.add(BLACK, x, g + 3.12, -y, 9.4, 0.08, 1.5, wallA, 0, tilt(1.5, 0.12));
-    const [fx, fy] = P(0, 1.55); boxes.add(BLACK, fx, g + 3.04, -fy, 9.4, 0.2, 0.06, wallA);
-    for (const a of [-4.2, 4.2]) { // outside the sign
-      const [rx, ry] = P(a, 0.75); boxes.add(0x2b2b2b, rx, g + 3.55, -ry, 0.04, 0.04, 1.75, wallA, 0, tilt(1.4, 0.95));
-    }
+    const stripes = new THREE.MeshLambertMaterial({ map: stripeTexture(9.4), side: THREE.DoubleSide });
+    const drop = 0.55, out = 1.3, len = Math.hypot(drop, out);
+    const aw = new THREE.Mesh(new THREE.PlaneGeometry(9.4, len), stripes);
+    const [x, y] = P(0, out / 2 + 0.05);
+    aw.position.set(x, g + 3.3 - drop / 2, -y);
+    aw.rotation.order = 'YXZ'; aw.rotation.y = face; aw.rotation.x = -Math.atan2(out, drop);
+    aw.castShadow = shadows; scene.add(aw);
+    const val = new THREE.Mesh(new THREE.PlaneGeometry(9.4, 0.25), stripes);
+    const [vx, vy] = P(0, out + 0.06);
+    val.position.set(vx, g + 3.3 - drop - 0.12, -vy); val.rotation.y = face; scene.add(val);
+    for (const a of [-4.7, 4.7]) { const [rx, ry] = P(a, out / 2 + 0.05); boxes.add(BLACK, rx, g + 3.3 - drop / 2, -ry, 0.04, 0.04, len, wallA, 0, tilt(out, drop)); }
   }
-  // The sign: black metal letters on the siding, lit by three gooseneck barn lamps
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 1.12), new THREE.MeshLambertMaterial({ map: signTexture(), transparent: true }));
-  { const [x, y] = P(0, 0.1); sign.position.set(x, g + 3.95, -y); sign.rotation.y = face; scene.add(sign); }
+  // The sign: white painted letters on the navy wall, lit by three gooseneck barn lamps
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 0.95), new THREE.MeshLambertMaterial({ map: signTexture(), transparent: true }));
+  { const [x, y] = P(0, 0.1); sign.position.set(x, g + 4.3, -y); sign.rotation.y = face; scene.add(sign); }
   const bulb = new THREE.MeshBasicMaterial({ color: 0xffe2a8 });
   for (const a of [-1.9, 0, 1.9]) {
-    const [bx, by] = P(a, 0.1); boxes.add(BLACK, bx, g + 4.85, -by, 0.14, 0.2, 0.06, wallA); // wall plate
-    const [ax, ay] = P(a, 0.35); boxes.add(BLACK, ax, g + 4.95, -ay, 0.04, 0.04, 0.55, wallA, 0, tilt(0.5, -0.15));
+    const [bx, by] = P(a, 0.1); boxes.add(BLACK, bx, g + 4.95, -by, 0.14, 0.2, 0.06, wallA); // wall plate
+    const [ax, ay] = P(a, 0.35); boxes.add(BLACK, ax, g + 5.05, -ay, 0.04, 0.04, 0.55, wallA, 0, tilt(0.5, -0.15));
     const [sx, sy] = P(a, 0.66);
-    const shade = new THREE.Mesh(GEOM.cone8, mat(BLACK)); shade.scale.set(0.42, 0.22, 0.42); shade.position.set(sx, g + 4.96, -sy); scene.add(shade);
-    const b = new THREE.Mesh(GEOM.sphere, bulb); b.scale.set(0.12, 0.06, 0.12); b.position.set(sx, g + 4.84, -sy); scene.add(b);
+    const shade = new THREE.Mesh(GEOM.cone8, mat(BLACK)); shade.scale.set(0.42, 0.22, 0.42); shade.position.set(sx, g + 5.06, -sy); scene.add(shade);
+    const b = new THREE.Mesh(GEOM.sphere, bulb); b.scale.set(0.12, 0.06, 0.12); b.position.set(sx, g + 4.94, -sy); scene.add(b);
   }
 
   // ---- the patio ----
@@ -195,7 +205,7 @@ export function buildTrophyCoffee(world, boxes) {
     for (const s of [-1.1, 1.1]) { const [lx, ly] = P(a + s, 0.5); boxes.add(BLACK, lx, gb + 0.22, -ly, 0.06, 0.44, 0.36, wallA); }
     colliders.addCircle(x, -y, 0.35, 'bench', gb + 0.5);
   }
-  // Two long farm tables with benches, each under a cream market umbrella
+  // Two picnic tables, each under a navy market umbrella
   const ALONG_O = wallA + Math.PI / 2;
   for (const a of [-3.5, 3.5]) {
     const [x, y] = P(a, 3.3), gt = heightAtCampus(x, y);
@@ -207,59 +217,35 @@ export function buildTrophyCoffee(world, boxes) {
       for (const o of [2.4, 4.2]) { const [lx, ly] = P(a + s, o); boxes.add(BLACK, lx, gt + 0.22, -ly, 0.06, 0.44, 0.06, wallA); }
     }
     boxes.add(0xd8d2c4, x, gt + 1.5, -y, 0.06, 1.5, 0.06, 0); // umbrella pole
-    const um = new THREE.Mesh(GEOM.cone8, mat(CREAM)); um.scale.set(3.4, 0.55, 3.4); um.position.set(x, gt + 2.45, -y); um.rotation.y = ALONG_O + Math.PI / 8; um.castShadow = shadows; scene.add(um);
+    const um = new THREE.Mesh(GEOM.cone8, mat(NAVY)); um.scale.set(3.4, 0.55, 3.4); um.position.set(x, gt + 2.45, -y); um.rotation.y = ALONG_O + Math.PI / 8; um.castShadow = shadows; scene.add(um);
     const fin = new THREE.Mesh(GEOM.sphere, mat(0xb8ae98)); fin.scale.setScalar(0.12); fin.position.set(x, gt + 2.75, -y); scene.add(fin);
     for (const o of [2.6, 4.0]) { const [cx, cy] = P(a, o); colliders.addCircle(cx, -cy, 0.95, 'table', gt + 0.8); }
   }
-  // Two little round bistro tables with black metal chairs near the front edge
+  // Little round marble bistro tables with blue-and-white rattan chairs near the front edge
   for (const a of [-1.7, 1.7]) {
     const [x, y] = P(a, 5.1), gt = heightAtCampus(x, y);
-    const top = new THREE.Mesh(GEOM.cyl, mat(0x2b2b2b)); top.scale.set(0.7, 0.04, 0.7); top.position.set(x, gt + 0.74, -y); scene.add(top);
+    const top = new THREE.Mesh(GEOM.cyl, mat(MARBLE)); top.scale.set(0.7, 0.04, 0.7); top.position.set(x, gt + 0.74, -y); scene.add(top);
     boxes.add(BLACK, x, gt + 0.37, -y, 0.06, 0.74, 0.06, 0);
     boxes.add(BLACK, x, gt + 0.02, -y, 0.45, 0.04, 0.45, wallA);
     for (const s of [-0.55, 0.55]) {
       const [cx, cy] = P(a + s, 5.1), an = wallA + (s < 0 ? 0 : Math.PI);
-      boxes.add(BLACK, cx, gt + 0.46, -cy, 0.4, 0.04, 0.4, an);
-      const [kx, ky] = P(a + s * 1.36, 5.1); boxes.add(BLACK, kx, gt + 0.7, -ky, 0.04, 0.48, 0.38, an);
-      for (const d of [-0.16, 0.16]) for (const e of [-0.16, 0.16]) { const [lx, ly] = P(a + s + d, 5.1 + e); boxes.add(BLACK, lx, gt + 0.23, -ly, 0.03, 0.46, 0.03, 0); }
+      boxes.add(RATTAN, cx, gt + 0.46, -cy, 0.42, 0.05, 0.42, an);
+      const [kx, ky] = P(a + s * 1.36, 5.1); boxes.add(RATTAN, kx, gt + 0.72, -ky, 0.05, 0.5, 0.4, an);
+      boxes.add(0xf2f0ea, kx, gt + 0.86, -ky, 0.06, 0.08, 0.42, an); // the white weave band
+      for (const d of [-0.16, 0.16]) for (const e of [-0.16, 0.16]) { const [lx, ly] = P(a + s + d, 5.1 + e); boxes.add(0xc9b48a, lx, gt + 0.23, -ly, 0.03, 0.46, 0.03, 0); }
     }
     colliders.addCircle(x, -y, 0.5, 'table', gt + 0.8);
   }
-  // Black planters with little olive trees at the front corners; the string-light poles rise out of them
-  const poles = [];
-  for (const a of [-5.6, 5.6]) {
-    const [x, y] = P(a, 5.6), gp = heightAtCampus(x, y);
-    boxes.add(0x2a2a2a, x, gp + 0.35, -y, 0.8, 0.7, 0.8, wallA);
-    boxes.add(0x4a3a2a, x, gp + 0.69, -y, 0.7, 0.04, 0.7, wallA);
-    boxes.add(0x3b2f26, x, gp + 1.9, -y, 0.12, 3.3, 0.12, wallA); // light pole
-    const [ox, oy] = P(a * 0.93, 5.3);
-    boxes.add(0x6b5a46, ox, gp + 1.05, -oy, 0.08, 0.8, 0.08, 0.4);
-    const crown = new THREE.Mesh(GEOM.sphere, mat(OLIVE, { flatShading: true })); crown.scale.set(1.0, 0.8, 1.0); crown.position.set(ox, gp + 1.7, -oy); crown.castShadow = shadows; scene.add(crown);
-    colliders.addCircle(x, -y, 0.5, 'planter', gp + 0.7);
-    poles.push([x, gp + 3.5, -y]);
+  // Stacked-stone piers along the front of the patio, carrying a dark timber pergola
+  const STONES = [0x8a7f72, 0x6f6457, 0x9a8a72, 0x5e544a];
+  for (const a of [-5.6, 0, 5.6]) {
+    const [x, y] = P(a, 6.2), gp = heightAtCampus(x, y);
+    for (let k = 0; k < 7; k++) boxes.add(STONES[(k + Math.round(a)) & 3], x, gp + 0.22 + k * 0.42, -y, 0.7 - (k % 2) * 0.03, 0.42, 0.7 - ((k + 1) % 2) * 0.03, wallA);
+    boxes.add(0xb9b5ad, x, gp + 3.05, -y, 0.82, 0.12, 0.82, wallA); // cap
+    colliders.addCircle(x, -y, 0.5, 'pier', gp + 3.1);
   }
-  // Café string lights: from the wall to each pole, crossing over the patio, and along the front
-  const anchors = [-5.4, 5.4].map((a) => { const [x, y] = P(a, 0.15); return [x, g + 3.4, -y]; });
-  const strands = [[anchors[0], poles[1]], [anchors[1], poles[0]], [poles[0], poles[1]], [anchors[0], poles[0]], [anchors[1], poles[1]]];
-  const wirePts = [], bulbs = [];
-  for (const [p0, p1] of strands) {
-    const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
-    const n = Math.max(4, Math.round(len / 0.55));
-    let prev = null;
-    for (let k = 0; k <= n; k++) {
-      const u = k / n, sag = 0.45 * 4 * u * (1 - u);
-      const p = new THREE.Vector3(p0[0] + (p1[0] - p0[0]) * u, p0[1] + (p1[1] - p0[1]) * u - sag, p0[2] + (p1[2] - p0[2]) * u);
-      if (prev) wirePts.push(prev, p);
-      if (k > 0 && k < n) bulbs.push(p);
-      prev = p;
-    }
-  }
-  const wires = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wirePts), new THREE.LineBasicMaterial({ color: 0x222222 }));
-  scene.add(wires);
-  const bulbMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.06, 1), new THREE.MeshBasicMaterial({ color: 0xffe0a0 }), bulbs.length);
-  const m4 = new THREE.Matrix4();
-  bulbs.forEach((p, i) => { m4.makeTranslation(p.x, p.y - 0.06, p.z); bulbMesh.setMatrixAt(i, m4); });
-  scene.add(bulbMesh);
+  { const [x, y] = P(0, 6.2); boxes.add(0x3a2a20, x, g + 3.25, -y, 12.4, 0.3, 0.25, wallA); }
+  for (let a = -5.6; a <= 5.6; a += 0.8) { const [x, y] = P(a, 3.2); boxes.add(0x3a2a20, x, g + 3.42, -y, 0.12, 0.2, 6.6, wallA); }
   // Chalkboard A-frame by the door, and trash and recycling cans by the wall
   { const [mx, my] = P(1.5, 1.3), gm = heightAtCampus(mx, my); boxes.add(0x1f2a24, mx, gm + 0.5, -my, 0.6, 0.95, 0.06, wallA, 0, 0.18); boxes.add(0x6b4f33, mx, gm + 0.5, -my, 0.66, 1.0, 0.03, wallA, 0, 0.18); }
   for (const [a, color] of [[5.0, 0x3a3a3a], [5.6, 0x2f5d8a]]) {

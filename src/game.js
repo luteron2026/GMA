@@ -14,6 +14,7 @@ import { clamp, lerp, mulberry32, pointInPoly } from './physics.js';
 import { groundY } from './terrain.js';
 import { Pickleball, Volleyball } from './sports.js';
 import { Soccer } from './soccer.js';
+import { Interior, INTERIORS } from './interiors.js';
 
 const BORROW_LINES = [
   'You shared Romans 12:13 ("practice hospitality"). The driver insists you borrow the car.',
@@ -97,6 +98,7 @@ export class Game {
     this.missions = new Missions(this);
     this.missions.init();
     this.populate();
+    this.setupInteriors();
     this.started = false;
     this.autosaveT = 0;
     this.restoreState();
@@ -120,6 +122,69 @@ export class Game {
   }
 
   // ---------- setup ----------
+
+  // Walk-in interiors: a door spot outside each building that has one (see interiors.js)
+  setupInteriors() {
+    const w = this.world;
+    this.interior = null;
+    this.interiors = [];
+    const ring = new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: 0.35, depthWrite: false });
+    for (const id of Object.keys(INTERIORS)) {
+      const def = INTERIORS[id];
+      let door = null;
+      if (def.door === 'trophy') {
+        const t = w.trophy;
+        if (t) { const [x, y] = t.P(0, 1.3); door = { x, z: -y, heading: Math.atan2(t.nx, -t.ny) }; }
+      } else {
+        const b = w.buildings.find((q) => q.id === (def.building || id));
+        const e = b && w.doorEdge(b);
+        if (e) {
+          // Slide along the entrance wall, if need be, so the door's prompt doesn't sit on a
+          // mission's start marker
+          const gap = (x, y) => Math.min(...this.missions.startMarkers.map((m) => Math.hypot(m.pos[0] - x, m.pos[1] + y)));
+          let along = 0, bestGap = -1;
+          for (const a of [0, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7, 8, -8, 10, -10]) {
+            if (Math.abs(a) > e.len / 2 - 1) continue;
+            const d = gap(e.mx + e.tx * a + e.nx * 1.4, e.my + e.ty * a + e.ny * 1.4);
+            if (d > 3.9) { along = a; break; }
+            if (d > bestGap) { bestGap = d; along = a; }
+          }
+          const x = e.mx + e.tx * along + e.nx * 1.4, y = e.my + e.ty * along + e.ny * 1.4;
+          door = { x, z: -y, heading: Math.atan2(e.nx, -e.ny) };
+        }
+      }
+      if (!door) continue;
+      const it = new Interior(this, id, door);
+      this.interiors.push(it);
+      // A soft blue welcome mat marks the way in
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.8, 24), ring);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(door.x, groundY(door.x, door.z) + 0.06, door.z);
+      this.scene.add(m);
+    }
+  }
+
+  enterInterior(it) {
+    if (this.missions.active) { this.toast('Finish your mission first. Then you can go inside.'); return; }
+    this.interior = it;
+    it.enter();
+    this.state = 'inside';
+    this.hud.setPrompt(null);
+    this.hud.big(it.name, it.def.sub || '');
+    this.audio.beep();
+  }
+
+  leaveInterior() {
+    const it = this.interior;
+    if (!it) return;
+    it.leave();
+    this.interior = null;
+    const d = it.door;
+    this.player.teleport(d.x, d.z, d.heading);
+    this.camPos.set(d.x - Math.sin(d.heading) * 6, groundY(d.x, d.z) + 3.2, d.z - Math.cos(d.heading) * 6);
+    this.state = 'play';
+    this.hud.setPrompt(null);
+  }
 
   populate() {
     const w = this.world;
@@ -145,6 +210,15 @@ export class Game {
     }
     const [dx, dz] = w.places.deanCart;
     this.spawnVehicle('deanCart', dx, dz, Math.PI / 2);
+    // The white Campus Safety cart by the guard shack
+    if (w.places.safetyCart) {
+      const [sx, sz, sh] = w.places.safetyCart;
+      const [x, z] = w.openVehicleSpot(sx, sz, sh, VEHICLE_TYPES.cart);
+      const v = new Vehicle(this, 'cart', x, z, sh, 0xffffff);
+      v.label = 'Campus Safety Cart';
+      v.home = { x, z, heading: sh };
+      this.vehicles.push(v);
+    }
     // The ROTC-surplus tank on the North Campus lawn, and the chopper on its pad in the
     // Reese Center lot
     const tk = w.places.tankSpot;
@@ -372,7 +446,7 @@ export class Game {
 
   pause(on) {
     if (this.state === 'title' || this.state === 'ending') return;
-    this.state = on ? 'pause' : (this.sport ? 'sport' : 'play');
+    this.state = on ? 'pause' : (this.sport ? 'sport' : this.interior ? 'inside' : 'play');
     document.getElementById('pause').classList.toggle('show', on);
     document.getElementById('abandon').style.display = this.missions.active ? '' : 'none';
     this.clock.getDelta();
@@ -479,8 +553,24 @@ export class Game {
         }
       }
     }
+    // Building doors you can walk into
+    if (!p.vehicle) {
+      for (const it of this.interiors) {
+        if (Math.hypot(it.door.x - p.x, it.door.z - p.z) < 1.3) return { text: `🚪 Go inside <b>${it.name}</b>`, fn: () => this.enterInterior(it) };
+      }
+    }
     const mi = this.missions.interaction();
     if (mi) return mi;
+    // Campus Safety at the guard shack window
+    const sh = this.world.places.shack;
+    if (!p.vehicle && sh && Math.hypot(sh[0] - p.x, sh[1] - p.z) < 2.6) {
+      return { text: '🚓 Say hi to <b>Campus Safety</b>', fn: () => this.toast([
+        '🚓 "Morning! Drive slow, there are students everywhere." You promise you will.',
+        '🚓 The officer waves. "Saw you helping folks out there. Keep it up."',
+        '🚓 "Lost and found has three water bottles and a Greek lexicon. Yours?"',
+        '🚓 "Yes, the golf cart is ours. No, you may not borrow it. ...Fine, ask nicely."',
+      ][Math.floor(Math.random() * 4)]) };
+    }
     // Trophy Coffee
     const tc = this.world.places.trophy;
     if (!p.vehicle && tc && Math.hypot(tc[0] - p.x, tc[1] - p.z) < 4) {
@@ -672,14 +762,15 @@ export class Game {
       this.toast(m ? '🔇 Sound off' : '🔊 Sound on');
       document.getElementById('btn-mute').textContent = m ? '🔇' : '🔊';
     }
-    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause' || this.state === 'sport')) this.pause(this.state !== 'pause');
+    if (inp.wasPressed('pause') && (this.state === 'play' || this.state === 'pause' || this.state === 'sport' || this.state === 'inside')) this.pause(this.state !== 'pause');
 
     if (this.state === 'play') this.update(dt);
     else if (this.state === 'sport') { this.sport.update(dt); this.updateWorldOnly(dt); this.fadeLabels(); }
+    else if (this.state === 'inside') this.interior.update(dt);
     else if (this.state === 'title') this.titleCam(dt);
     else if (this.state === 'faint' || this.state === 'ending') { this.updateWorldOnly(dt); this.updateCamera(dt); }
 
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.interior && (this.state === 'inside' || this.state === 'pause') ? this.interior.scene : this.scene, this.camera);
     inp.endFrame();
   }
 

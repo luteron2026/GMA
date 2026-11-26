@@ -13,6 +13,7 @@ import { planCourts, buildCourts } from './sports.js';
 import { planPitch, paintPitch, buildPitch } from './soccer.js';
 import { planDixonFireplace, DixonFireplace } from './fireplace.js';
 import { buildTrophyCoffee } from './trophy.js';
+import { planGuardShack, buildGuardShack } from './shack.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -65,6 +66,7 @@ export class World {
     this.walkways = walks.walks;
     this.plazas = walks.pads;
     this.planTrophy();
+    planGuardShack(this); // the Campus Safety booth at the entrance drive
     this.fireSpot = planDixonFireplace(this); // the outdoor fireplace in Dixon's courtyard
     this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
     this.planVehicleSpots();
@@ -91,6 +93,7 @@ export class World {
     buildCourts(this, extra);
     buildPitch(this, extra);
     this.buildTrophy(extra);
+    buildGuardShack(this, extra);
     if (this.fireSpot) this.fireplace = new DixonFireplace(this, this.fireSpot, extra);
     this.buildBackyardPools();
     extra.flush(this.scene, !this.lowSpec);

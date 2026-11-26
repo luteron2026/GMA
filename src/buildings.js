@@ -28,7 +28,7 @@ const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const texCache = new Map();
 export function wallTexture(look) {
   const w = look.windows;
-  const key = [look.wall, look.trim, w.shape, w.size, w.arrangement, w.tint, !!look.topBand].join('|');
+  const key = [look.wall, look.trim, w.shape, w.size, w.arrangement, w.tint, !!look.topBand, look.siding, look.bay, look.ac, look.floorBand, w.frame].join('|');
   if (texCache.has(key)) return texCache.get(key);
   const bays = w.arrangement === 'scattered' ? 2 : 1;
   const bayW = w.size === 'storefront' ? 3 : 3.5, floorH = 3.6;
@@ -38,13 +38,20 @@ export function wallTexture(look) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = hex(look.wall);
   ctx.fillRect(0, 0, c.width, S);
-  // Stucco grain
+  // Stucco grain, or siding: horizontal lap boards ('lap') or vertical board and batten
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  for (let i = 0; i < 900 * bays; i++) {
-    ctx.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.06)';
-    ctx.fillRect(rnd() * c.width, rnd() * S, 2, 2);
+  if (look.siding === 'lap') {
+    for (let y = 0; y < S; y += S / 18) { ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(0, y, c.width, 1.5); ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.fillRect(0, y + 1.5, c.width, 1.5); }
+  } else if (look.siding === 'batten') {
+    for (let x = 0; x < c.width; x += S / 9) { ctx.fillStyle = 'rgba(0,0,0,0.14)'; ctx.fillRect(x + 3, 0, 2, S); ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x, 0, 3, S); }
+  } else {
+    for (let i = 0; i < 900 * bays; i++) {
+      ctx.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.06)';
+      ctx.fillRect(rnd() * c.width, rnd() * S, 2, 2);
+    }
   }
+  if (look.floorBand) { ctx.fillStyle = hex(look.floorBand); ctx.fillRect(0, S - 7, c.width, 7); }
   if (look.topBand) { ctx.fillStyle = hex(look.trim); ctx.fillRect(0, 0, c.width, S * 0.1); }
   // Window size as fractions of the bay: [width, height, sill]
   const SIZE = { small: [0.3, 0.3, 0.4], medium: [0.44, 0.42, 0.32], tall: [0.38, 0.62, 0.16], storefront: [0.86, 0.76, 0.06] };
@@ -53,9 +60,17 @@ export function wallTexture(look) {
   const ribbon = w.arrangement === 'ribbon';
   if (ribbon) { fw = 1; fh = 0.36; sill = 0.36; }
   const glass = TINT[w.tint] || TINT.dark;
-  const frame = hex(look.trim);
+  const frame = hex(w.frame ?? look.trim);
   const drawWindow = (cx) => {
     const ww = fw * S, wh = fh * S, x = cx - ww / 2, y = S * (1 - sill) - wh;
+    // A dark panel running floor to floor behind the window (the dorms' window bays), and a
+    // window AC unit in it under the sill
+    if (look.bay) { ctx.fillStyle = hex(look.bay); ctx.fillRect(x - ww * 0.07, 0, ww * 1.14, S); }
+    if (look.ac) {
+      const aw = ww * 0.42, ah = S * 0.11, ax = cx - aw / 2, ay = y + wh + S * 0.05;
+      ctx.fillStyle = '#d6d4cd'; ctx.fillRect(ax, ay, aw, ah);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; for (let k = 2; k < aw - 2; k += 4) ctx.fillRect(ax + k, ay + 3, 1.5, ah - 6);
+    }
     ctx.beginPath();
     if (w.shape === 'arched') {
       // Round top: a semicircle in meters is an ellipse on the stretched canvas
@@ -308,6 +323,60 @@ export function addDetails(world, b, look, door, geo, boxes) {
     }
   }
 
+  // The Reese Center's arcade (from the campus map's photos): along both long walls, a row of
+  // tall stucco arches stands out from the building, their legs flaring down to the lawn and
+  // their crowns rising past the eaves, with a covered second-floor walkway and a wood railing
+  // between the arches and the wall
+  if (look.arcade) {
+    const color = look.arcade.color ?? look.wall, rail = look.arcade.rail ?? 0x7a5a3a;
+    const eaves = geo.verts.slice(0, geo.n).map((v) => v[2]).sort((p, q) => p - q);
+    const eave = eaves[Math.floor(eaves.length / 2)];
+    const y0 = ground0 + geo.floorH;
+    const edges = b.poly.map((_, i) => wallEdgeAt(b, i)).filter((e) => e.len > 12).sort((p, q) => q.len - p.len);
+    const picked = edges.slice(0, 1);
+    const opp = edges.find((e) => e !== picked[0] && e.nx * picked[0].nx + e.ny * picked[0].ny < -0.8);
+    if (opp) picked.push(opp);
+    const OUT = 2.6; // arches stand this far out from the wall
+    for (const e of picked) {
+      const a = ang(e.tx, e.ty);
+      const n = Math.max(2, Math.round((e.len - 1) / 4.8)), span = (e.len - 1) / n;
+      const P = (u, o) => [e.ax + e.tx * u + e.nx * o, e.ay + e.ty * u + e.ny * o];
+      const crown = eave + 1.2;
+      for (let k = 0; k < n; k++) {
+        const uc = 0.5 + span * (k + 0.5), half = span / 2;
+        const gl = heightAtCampus(...P(uc, OUT));
+        // the arch: a parabola from ground at each leg up to the crown, in short straight pieces
+        const SEG = 12;
+        let prev = null;
+        for (let s = 0; s <= SEG; s++) {
+          const t = -1 + (2 * s) / SEG;
+          // a round-shouldered arch: steep legs, a broad top
+          const pt = [uc + t * half * 0.96, gl + (crown - 0.6 - gl) * Math.pow(1 - Math.pow(Math.abs(t), 2.4), 0.55)];
+          if (prev) {
+            const du = pt[0] - prev[0], dy = pt[1] - prev[1], L = Math.hypot(du, dy);
+            const [cx, cy] = P((pt[0] + prev[0]) / 2, OUT);
+            // thicker toward the feet, like the buttress legs in the photos
+            const thick = 0.5 + 0.7 * Math.pow(Math.abs(t), 2);
+            boxes.add(color, cx, (pt[1] + prev[1]) / 2, -cy, L + 0.08, thick, 0.7, a, Math.atan2(dy, du));
+          }
+          prev = pt;
+        }
+        const [fx, fy] = P(uc - half, OUT);
+        colliders.addCircle(fx, -fy, 0.6, 'arch', y0);
+      }
+      { const [fx, fy] = P(e.len - 0.5, OUT); colliders.addCircle(fx, -fy, 0.6, 'arch', y0); }
+      // walkway deck, its railing between the legs, and the stucco cover joining the crowns to the wall
+      const [mx, my] = P(e.len / 2, OUT / 2);
+      boxes.add(0x9a8f80, mx, y0 - 0.12, -my, e.len, 0.25, OUT, a);
+      const [rx, ry] = P(e.len / 2, OUT - 0.5);
+      boxes.add(rail, rx, y0 + 1.0, -ry, e.len - 0.6, 0.1, 0.1, a);
+      for (let u = 0.6; u < e.len - 0.5; u += 0.5) { const [px, py] = P(u, OUT - 0.5); boxes.add(rail, px, y0 + 0.5, -py, 0.07, 1.0, 0.07, a); }
+      boxes.add(color, mx, crown - 0.35, -my, e.len, 0.4, OUT + 0.4, a);
+      const [bx, by] = P(e.len / 2, OUT);
+      boxes.add(color, bx, crown - 0.1, -by, e.len, 0.55, 0.75, a); // the band across the arch tops
+    }
+  }
+
   // Stone or brick piers at the corners and along the walls (along the walkway's outer edge
   // when there is one, holding up its cover)
   if (look.piers) {
@@ -523,7 +592,7 @@ function wallEdgeAt(b, i) {
   const len = Math.hypot(bx - ax, by - ay) || 1;
   let nx = (by - ay) / len, ny = -(bx - ax) / len;
   if (pointInPoly((ax + bx) / 2 + nx * 0.3, (ay + by) / 2 + ny * 0.3, p)) { nx = -nx; ny = -ny; }
-  return { nx, ny, tx: (bx - ax) / len, ty: (by - ay) / len };
+  return { nx, ny, tx: (bx - ax) / len, ty: (by - ay) / len, ax, ay, len };
 }
 
 // Fountains, pool furniture and courtyard benches
@@ -712,12 +781,17 @@ function buildPool(world, pl, boxes) {
   const end = endRoom[1] >= endRoom[-1] ? 1 : -1;
   if (room[-wide] >= 2.4) guard(0, -wide * (pl.h / 2 + 1.6), ry, [1, 0]);
   else if (endRoom[end] >= 2.6) guard(end * (pl.w / 2 + 1.6), 0, ry + Math.PI / 2, [0, 1]);
-  // Shade canopy: a flat charcoal metal roof on steel posts, with cafe tables under it
+  // Shade canopy: a flat white corrugated-metal roof on dark steel posts (as in the campus
+  // map's photo of the pool), with cafe tables under it
   if (pl.shade) {
     const [a0, a1, b0, b1] = pl.shade;
     const H = 3.1, L = a1 - a0, D = b1 - b0, steel = 0x2b2f33;
     const [cx, cy] = at((a0 + a1) / 2, (b0 + b1) / 2);
-    boxes.add(0x3d4246, cx, top + H + 0.08, -cy, L + 0.4, 0.12, D + 0.4, ry);
+    boxes.add(0xdedcd5, cx, top + H + 0.08, -cy, L + 0.4, 0.12, D + 0.4, ry);
+    for (let u = a0 - 0.1; u <= a1 + 0.1; u += 0.3) { // the corrugation ribs
+      const [rx, ry2] = at(u, (b0 + b1) / 2);
+      boxes.add(0xc8c6bf, rx, top + H + 0.16, -ry2, 0.06, 0.05, D + 0.4, ry);
+    }
     for (const v of [b0 + 0.15, b1 - 0.15]) {
       const [bx, by] = at((a0 + a1) / 2, v);
       boxes.add(steel, bx, top + H - 0.12, -by, L, 0.22, 0.12, ry);
