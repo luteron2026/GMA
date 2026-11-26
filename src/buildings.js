@@ -138,7 +138,17 @@ export function planSite(world) {
         }
       }
     }
-    if (L.pool) {
+    if (L.pool && L.pool.at) {
+      // Measured: center, size, heading, and the deck as a rectangle in the pool's frame
+      const [x, y] = toCampus(L.pool.at);
+      const ang = ((L.pool.heading || 0) * Math.PI) / 180;
+      const [w, h] = L.pool.size;
+      const rect = L.pool.deck || [-w / 2 - 3.5, w / 2 + 3.5, -h / 2 - 3.5, h / 2 + 3.5];
+      const c = Math.cos(ang), sn = Math.sin(ang);
+      const pt = (u, v) => [x + c * u - sn * v, y + sn * u + c * v];
+      const deck = [pt(rect[0], rect[2]), pt(rect[1], rect[2]), pt(rect[1], rect[3]), pt(rect[0], rect[3])];
+      site.pools.push({ x, y, ang, w, h, deck, rect, shade: L.pool.shade, gate: L.pool.gate, open: L.pool.open });
+    } else if (L.pool) {
       // Next to the noted end of the building, on the flattest open ground that fits the
       // pool and its deck (the slope around Hotchkiss would otherwise need a tall platform)
       const e = wallEdge(b, { dir: DIRS[L.pool.side], minLen: 3 });
@@ -618,21 +628,25 @@ export function entranceMonument(scene, look, x, z, gy, ang, shadows) {
 }
 
 // An in-ground pool on a level concrete deck: tiled coping, water with lane lines, a
-// ladder, lounge chairs, umbrellas, a lifeguard chair and an iron fence with a gate
+// ladder, lounge chairs, umbrellas, a lifeguard chair, a shade canopy (when noted) and an
+// iron fence with a gate. The deck is pl.rect = [u0, u1, v0, v1] in the pool's frame.
 function buildPool(world, pl, boxes) {
   const scene = world.scene, colliders = world.colliders;
   const c = Math.cos(pl.ang), s = Math.sin(pl.ang);
   const at = (u, v) => [pl.x + c * u - s * v, pl.y + s * u + c * v]; // pool frame -> campus
   const ry = Math.atan2(s, c); // box heading that lays local x along the pool's length
-  const DW = pl.w / 2 + 3.5, DH = pl.h / 2 + 3.5; // deck half sizes
+  const [u0, u1, v0, v1] = pl.rect || [-pl.w / 2 - 3.5, pl.w / 2 + 3.5, -pl.h / 2 - 3.5, pl.h / 2 + 3.5];
   let lo = Infinity, hi = -Infinity;
-  for (let u = -DW; u <= DW; u += DW / 3) for (let v = -DH; v <= DH; v += DH / 2) {
-    const g = heightAtCampus(...at(u, v)); lo = Math.min(lo, g); hi = Math.max(hi, g);
+  for (let i = 0; i <= 6; i++) for (let j = 0; j <= 4; j++) {
+    const g = heightAtCampus(...at(u0 + ((u1 - u0) * i) / 6, v0 + ((v1 - v0) * j) / 4)); lo = Math.min(lo, g); hi = Math.max(hi, g);
   }
   const top = hi + 0.12; // level deck surface
   const [dx, dy] = at(0, 0);
   // Deck slab (shows a low retaining edge where the ground falls away)
-  boxes.add(0xd6cfc0, dx, (lo - 0.4 + top) / 2, -dy, DW * 2, top - lo + 0.4, DH * 2, ry);
+  {
+    const [sx, sy] = at((u0 + u1) / 2, (v0 + v1) / 2);
+    boxes.add(0xd6cfc0, sx, (lo - 0.4 + top) / 2, -sy, u1 - u0, top - lo + 0.4, v1 - v0, ry);
+  }
   // Coping around the water
   const cop = 0xe9e4d8;
   for (const v of [-1, 1]) { const [x, y] = at(0, v * (pl.h / 2 + 0.25)); boxes.add(cop, x, top + 0.04, -y, pl.w + 1, 0.1, 0.5, ry); }
@@ -666,15 +680,19 @@ function buildPool(world, pl, boxes) {
       boxes.add(0xd8dde2, (x + hx) / 2, top + 0.9, -(y + hy) / 2, 0.06, 0.06, 0.3, ry);
     }
   }
-  // Lounge chairs and umbrellas along the long sides
+  // Lounge chairs along the long sides that have room, umbrellas on the wider one (unless
+  // the shade canopy covers it)
+  const room = { 1: v1 - pl.h / 2, '-1': -pl.h / 2 - v0 };
+  const wide = room[1] >= room[-1] ? 1 : -1;
   for (const side of [-1, 1]) {
+    if (room[side] < 3.3) continue;
     for (let k = -2; k <= 2; k++) {
-      if (side === -1 && k % 2) continue;
+      if (side !== wide && k % 2) continue;
       const [x, y] = at(k * 2.3, side * (pl.h / 2 + 2));
       boxes.add(0xf2f2f2, x, top + 0.3, -y, 0.7, 0.12, 1.9, ry);
       const [bx, by] = at(k * 2.3, side * (pl.h / 2 + 2.75));
       boxes.add(0xf2f2f2, bx, top + 0.55, -by, 0.7, 0.55, 0.12, ry, 0, side * 0.5);
-      if (k % 2 === 0 && side === 1) {
+      if (k % 2 === 0 && side === wide && !pl.shade) {
         const [ux, uy] = at(k * 2.3 + 1.15, side * (pl.h / 2 + 2.3));
         boxes.add(0x6b5238, ux, top + 1.2, -uy, 0.07, 2.4, 0.07, 0);
         const shade = new THREE.Mesh(GEOM.cone8, mat(k ? 0x1f3a6e : 0xc9a227));
@@ -683,18 +701,55 @@ function buildPool(world, pl, boxes) {
       }
     }
   }
-  // Lifeguard chair at the middle of the far side
-  {
-    const [x, y] = at(0, -(pl.h / 2 + 1.6));
-    for (const o of [-0.4, 0.4]) { const [px, py] = at(o, -(pl.h / 2 + 1.6)); boxes.add(0xf4f4f4, px, top + 0.9, -py, 0.1, 1.8, 0.1, ry); }
-    boxes.add(0xf4f4f4, x, top + 1.8, -y, 1.0, 0.12, 0.7, ry);
-    boxes.add(0xc4342b, x, top + 2.2, -y, 1.0, 0.7, 0.1, ry);
+  // Lifeguard chair: across from the umbrellas, or at the roomier end when that side is narrow
+  const guard = (gu, gv, a, lat) => {
+    for (const o of [-0.4, 0.4]) { const [px, py] = at(gu + lat[0] * o, gv + lat[1] * o); boxes.add(0xf4f4f4, px, top + 0.9, -py, 0.1, 1.8, 0.1, a); }
+    const [x, y] = at(gu, gv);
+    boxes.add(0xf4f4f4, x, top + 1.8, -y, 1.0, 0.12, 0.7, a);
+    boxes.add(0xc4342b, x, top + 2.2, -y, 1.0, 0.7, 0.1, a);
+  };
+  const endRoom = { 1: u1 - pl.w / 2, '-1': -pl.w / 2 - u0 };
+  const end = endRoom[1] >= endRoom[-1] ? 1 : -1;
+  if (room[-wide] >= 2.4) guard(0, -wide * (pl.h / 2 + 1.6), ry, [1, 0]);
+  else if (endRoom[end] >= 2.6) guard(end * (pl.w / 2 + 1.6), 0, ry + Math.PI / 2, [0, 1]);
+  // Shade canopy: a flat charcoal metal roof on steel posts, with cafe tables under it
+  if (pl.shade) {
+    const [a0, a1, b0, b1] = pl.shade;
+    const H = 3.1, L = a1 - a0, D = b1 - b0, steel = 0x2b2f33;
+    const [cx, cy] = at((a0 + a1) / 2, (b0 + b1) / 2);
+    boxes.add(0x3d4246, cx, top + H + 0.08, -cy, L + 0.4, 0.12, D + 0.4, ry);
+    for (const v of [b0 + 0.15, b1 - 0.15]) {
+      const [bx, by] = at((a0 + a1) / 2, v);
+      boxes.add(steel, bx, top + H - 0.12, -by, L, 0.22, 0.12, ry);
+    }
+    const n = Math.max(1, Math.round(L / 3.6));
+    for (let k = 0; k <= n; k++) {
+      const u = a0 + 0.2 + ((L - 0.4) * k) / n;
+      for (const v of [b0 + 0.15, b1 - 0.15]) {
+        const [px, py] = at(u, v);
+        boxes.add(steel, px, top + H / 2, -py, 0.14, H, 0.14, ry);
+        colliders.addCircle(px, -py, 0.15, 'post', top + H + 0.2);
+      }
+    }
+    for (let k = 0; k < n; k++) {
+      const u = a0 + 0.2 + ((L - 0.4) * (k + 0.5)) / n;
+      const [tx, ty] = at(u, (b0 + b1) / 2);
+      boxes.add(0xf4f4f0, tx, top + 0.74, -ty, 0.9, 0.05, 0.9, ry);
+      boxes.add(0x9a9a96, tx, top + 0.37, -ty, 0.08, 0.74, 0.08, ry);
+      for (const o of [-0.8, 0.8]) {
+        const [qx, qy] = at(u + o, (b0 + b1) / 2);
+        boxes.add(0xf4f4f0, qx, top + 0.45, -qy, 0.45, 0.06, 0.45, ry);
+        boxes.add(0xf4f4f0, qx + c * o * 0.28, top + 0.72, -(qy + s * o * 0.28), 0.06, 0.5, 0.45, ry);
+      }
+    }
   }
-  // Black iron fence around the deck, with a gate gap toward the building
+  // Black iron fence around the deck, with a 2 m gate (by default on the +u end) and no fence
+  // on sides a building closes (pl.open)
   const fence = 0x262626;
-  const runFence = (u0, v0, u1, v1) => {
-    const L = Math.hypot(u1 - u0, v1 - v0);
-    const [x0, y0] = at(u0, v0), [x1, y1] = at(u1, v1);
+  const runFence = (fu0, fv0, fu1, fv1) => {
+    const L = Math.hypot(fu1 - fu0, fv1 - fv0);
+    if (L < 0.3) return;
+    const [x0, y0] = at(fu0, fv0), [x1, y1] = at(fu1, fv1);
     const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
     const a = Math.atan2(y1 - y0, x1 - x0);
     boxes.add(fence, mx, top + 1.35, -my, L, 0.06, 0.06, a);
@@ -707,17 +762,22 @@ function buildPool(world, pl, boxes) {
     colliders.addPoly([[x0 - px, -(y0 - py)], [x1 - px, -(y1 - py)], [x1 + px, -(y1 + py)], [x0 + px, -(y0 + py)]], 'fence');
   };
   const f = 0.2;
-  runFence(-DW + f, -DH + f, DW - f, -DH + f);
-  runFence(-DW + f, DH - f, DW - f, DH - f);
-  runFence(-DW + f, -DH + f, -DW + f, DH - f);
-  runFence(DW - f, -DH + f, DW - f, -1);
-  runFence(DW - f, 1, DW - f, DH - f);
+  const gate = pl.gate || [u1, 0];
+  const edges = { S: [[u0 + f, v0 + f], [u1 - f, v0 + f]], N: [[u0 + f, v1 - f], [u1 - f, v1 - f]], W: [[u0 + f, v0 + f], [u0 + f, v1 - f]], E: [[u1 - f, v0 + f], [u1 - f, v1 - f]] };
+  for (const [side, [p, q]] of Object.entries(edges)) {
+    if (pl.open && pl.open.includes(side)) continue;
+    const along = p[1] === q[1]; // runs along u
+    const onEdge = along ? Math.abs(gate[1] - p[1]) < 0.5 : Math.abs(gate[0] - p[0]) < 0.5;
+    if (!onEdge) runFence(p[0], p[1], q[0], q[1]);
+    else if (along) { runFence(p[0], p[1], gate[0] - 1, p[1]); runFence(gate[0] + 1, p[1], q[0], q[1]); }
+    else { runFence(p[0], p[1], p[0], gate[1] - 1); runFence(p[0], gate[1] + 1, q[0], q[1]); }
+  }
   // The water itself
   const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => { const [x, y] = at(u * pl.w / 2, v * pl.h / 2); return [x, -y]; });
   colliders.addPoly(corners, 'pool');
-  // Pool sign
+  // Pool sign on the +u end fence
   const lbl = makePoolSign();
-  const [sx, sy] = at(DW - 0.2, 1.6);
+  const [sx, sy] = at(u1 - 0.2, 1.6);
   lbl.position.set(sx, top + 1.7, -sy); lbl.rotation.y = Math.atan2(c, -s);
   scene.add(lbl);
 }

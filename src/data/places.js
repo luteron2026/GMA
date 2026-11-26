@@ -24,3 +24,9 @@ export const PLACE_LABELS = [
 export const ENCLOSED_STRUCTURES = [
   [-6.2, 99.8], // Kinesiology Center
 ];
+
+// LiDAR structures that are open gazebos (by a point inside): the Oaks Pavilion, the
+// octagonal gazebo on the Under the Oaks lawn the university's printed map draws
+export const GAZEBOS = [
+  [6.7, -66.7], // Oaks Pavilion
+];

@@ -151,6 +151,26 @@ export function buildCourts(world, boxes) {
         colliders.addPoly([[x0 - nx, -(y0 - ny)], [x1 - nx, -(y1 - ny)], [x1 + nx, -(y1 + ny)], [x0 + nx, -(y0 + ny)]], 'fence', g + H);
       }
     });
+    // Light poles in the fence line, three down each long side (the campus map draws them)
+    {
+      const { fu, fv } = b.fence;
+      const dark = 0x2b2f33;
+      for (const side of [-1, 1]) for (const u of [-fu + 1.5, 0, fu - 1.5]) {
+        const [x, y] = b.P(u, side * (fv + 0.1));
+        const g = heightAtCampus(x, y);
+        boxes.add(dark, x, g + 5, -y, 0.22, 10, 0.22, 0);
+        // Head: a crossarm with two lamps tipped toward the court
+        const [hx, hy] = b.P(u, side * (fv - 0.5));
+        const a = ang(b.P, 0, 0, 1, 0);
+        boxes.add(dark, hx, g + 9.9, -hy, 1.6, 0.14, 0.14, a);
+        for (const o of [-0.55, 0.55]) {
+          const [lx, ly] = b.P(u + o, side * (fv - 0.6));
+          boxes.add(dark, lx, g + 9.7, -ly, 0.55, 0.35, 0.55, a);
+          boxes.add(0xfff2c8, lx, g + 9.51, -ly, 0.45, 0.04, 0.45, a);
+        }
+        colliders.addCircle(x, -y, 0.2, 'light', g + 10.2);
+      }
+    }
     // Pickleball nets: posts, mesh and a white top tape
     const netMat = new THREE.MeshLambertMaterial({ map: netTexture(), transparent: true, alphaTest: 0.3, side: THREE.DoubleSide });
     for (const c of courts.pickle) {
