@@ -555,12 +555,20 @@ export function buildStreetscape(world) {
   for (const p of PROPS) {
     const [x0, y0] = toCampus(p.at);
     if (p.kind === 'flagpoles') {
-      const st = nearestRoad(STREET_ROADS, x0, y0);
+      const st = nearestRoad(p.street ? STREET_ROADS.filter((r) => r.name === p.street) : STREET_ROADS, x0, y0);
       const flagMats = [new THREE.MeshLambertMaterial({ color: 0x1f3a6e, side: THREE.DoubleSide }), new THREE.MeshLambertMaterial({ color: 0xf4f4f4, side: THREE.DoubleSide })];
       for (let k = 0; k < p.count; k++) {
         const d = (k - (p.count - 1) / 2) * 3.5;
-        const [x, y] = [x0 + st.tx * d, y0 + st.ty * d];
-        if (world.pavedAt(x, y, 0.4)) continue;
+        // In a row along the street at the back of the parking (by the field fence, like the
+        // campus maps draw them): the first open ground past the pavement on the noted side
+        let nx = -st.ty, ny = st.tx;
+        if ((x0 - st.px) * nx + (y0 - st.py) * ny < 0) { nx = -nx; ny = -ny; }
+        const bx = st.px + st.tx * d, by = st.py + st.ty * d;
+        // (walk in from the field side to the far edge of the pavement)
+        let off = st.road.width / 2 + 26;
+        while (off > st.road.width / 2 + 1 && !world.pavedAt(bx + nx * off, by + ny * off, 0.35)) off -= 0.25;
+        if (off <= st.road.width / 2 + 1) continue;
+        const x = bx + nx * (off + 0.6), y = by + ny * (off + 0.6);
         const g = G(x, y);
         boxes.add(0xe8e8e8, x, g + 4.5, -y, 0.14, 9, 0.14, 0);
         boxes.add(0xd4af37, x, g + 9.05, -y, 0.22, 0.22, 0.22, 0);

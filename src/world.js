@@ -574,6 +574,8 @@ export class World {
       for (let gy = ey - 80; gy <= ey + 80; gy += 2) {
         if (!inCore(gx, gy) || !CAMPUS.campus.some((c) => pointInPoly(gx, gy, c))) continue;
         if (this.pavedAt(gx, gy, 7.5) || nearBuilding(gx, gy, 10)) continue;
+        // Away from the streets, where the power lines run
+        if (CAMPUS.roads.some((r) => r.kind === 'street' && distToPolyline(gx, gy, r.pts) < r.width / 2 + 16)) continue;
         if (fields.some((f) => pointInPoly(gx, gy, f) || distToPolyline(gx, gy, f, true) < 8)) continue;
         if (STRUCTURES.some(([sx, sy, len, wid]) => Math.hypot(sx - gx, sy - gy) < Math.max(len, wid) / 2 + 8)) continue;
         // Level: the ground under the pad varies by less than a meter
@@ -968,6 +970,9 @@ export class World {
       let [tx, ty, h, r, kind, cb, dx, dy] = t;
       // Nothing growing out of pavement, buildings, sports fields or the pool deck
       if (!this.plantable(tx, ty, 0.6)) continue;
+      // ...or with a crown reaching over the helicopter's rotor
+      const hp = this.places.helipad;
+      if (Math.hypot(tx + dx - hp[0], ty + dy + hp[1]) < 7 + Math.min(r, h * 0.7 + 1)) continue;
       // The LiDAR crown can sit a few meters off the trunk; past ~1.5 m the trunk leans
       // unnaturally, so pull the crown back over it
       const lean = Math.hypot(dx, dy), maxLean = Math.min(1.5, h * 0.12);
