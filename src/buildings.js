@@ -28,7 +28,7 @@ const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const texCache = new Map();
 export function wallTexture(look) {
   const w = look.windows;
-  const key = [look.wall, look.trim, w.shape, w.size, w.arrangement, w.tint, !!look.topBand].join('|');
+  const key = [look.wall, look.trim, w.shape, w.size, w.arrangement, w.tint, !!look.topBand, look.siding, look.bay, look.ac, look.floorBand, w.frame].join('|');
   if (texCache.has(key)) return texCache.get(key);
   const bays = w.arrangement === 'scattered' ? 2 : 1;
   const bayW = w.size === 'storefront' ? 3 : 3.5, floorH = 3.6;
@@ -38,13 +38,20 @@ export function wallTexture(look) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = hex(look.wall);
   ctx.fillRect(0, 0, c.width, S);
-  // Stucco grain
+  // Stucco grain, or siding: horizontal lap boards ('lap') or vertical board and batten
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  for (let i = 0; i < 900 * bays; i++) {
-    ctx.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.06)';
-    ctx.fillRect(rnd() * c.width, rnd() * S, 2, 2);
+  if (look.siding === 'lap') {
+    for (let y = 0; y < S; y += S / 18) { ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(0, y, c.width, 1.5); ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.fillRect(0, y + 1.5, c.width, 1.5); }
+  } else if (look.siding === 'batten') {
+    for (let x = 0; x < c.width; x += S / 9) { ctx.fillStyle = 'rgba(0,0,0,0.14)'; ctx.fillRect(x + 3, 0, 2, S); ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x, 0, 3, S); }
+  } else {
+    for (let i = 0; i < 900 * bays; i++) {
+      ctx.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.06)';
+      ctx.fillRect(rnd() * c.width, rnd() * S, 2, 2);
+    }
   }
+  if (look.floorBand) { ctx.fillStyle = hex(look.floorBand); ctx.fillRect(0, S - 7, c.width, 7); }
   if (look.topBand) { ctx.fillStyle = hex(look.trim); ctx.fillRect(0, 0, c.width, S * 0.1); }
   // Window size as fractions of the bay: [width, height, sill]
   const SIZE = { small: [0.3, 0.3, 0.4], medium: [0.44, 0.42, 0.32], tall: [0.38, 0.62, 0.16], storefront: [0.86, 0.76, 0.06] };
@@ -53,9 +60,17 @@ export function wallTexture(look) {
   const ribbon = w.arrangement === 'ribbon';
   if (ribbon) { fw = 1; fh = 0.36; sill = 0.36; }
   const glass = TINT[w.tint] || TINT.dark;
-  const frame = hex(look.trim);
+  const frame = hex(w.frame ?? look.trim);
   const drawWindow = (cx) => {
     const ww = fw * S, wh = fh * S, x = cx - ww / 2, y = S * (1 - sill) - wh;
+    // A dark panel running floor to floor behind the window (the dorms' window bays), and a
+    // window AC unit in it under the sill
+    if (look.bay) { ctx.fillStyle = hex(look.bay); ctx.fillRect(x - ww * 0.07, 0, ww * 1.14, S); }
+    if (look.ac) {
+      const aw = ww * 0.42, ah = S * 0.11, ax = cx - aw / 2, ay = y + wh + S * 0.05;
+      ctx.fillStyle = '#d6d4cd'; ctx.fillRect(ax, ay, aw, ah);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; for (let k = 2; k < aw - 2; k += 4) ctx.fillRect(ax + k, ay + 3, 1.5, ah - 6);
+    }
     ctx.beginPath();
     if (w.shape === 'arched') {
       // Round top: a semicircle in meters is an ellipse on the stretched canvas
@@ -712,12 +727,17 @@ function buildPool(world, pl, boxes) {
   const end = endRoom[1] >= endRoom[-1] ? 1 : -1;
   if (room[-wide] >= 2.4) guard(0, -wide * (pl.h / 2 + 1.6), ry, [1, 0]);
   else if (endRoom[end] >= 2.6) guard(end * (pl.w / 2 + 1.6), 0, ry + Math.PI / 2, [0, 1]);
-  // Shade canopy: a flat charcoal metal roof on steel posts, with cafe tables under it
+  // Shade canopy: a flat white corrugated-metal roof on dark steel posts (as in the campus
+  // map's photo of the pool), with cafe tables under it
   if (pl.shade) {
     const [a0, a1, b0, b1] = pl.shade;
     const H = 3.1, L = a1 - a0, D = b1 - b0, steel = 0x2b2f33;
     const [cx, cy] = at((a0 + a1) / 2, (b0 + b1) / 2);
-    boxes.add(0x3d4246, cx, top + H + 0.08, -cy, L + 0.4, 0.12, D + 0.4, ry);
+    boxes.add(0xdedcd5, cx, top + H + 0.08, -cy, L + 0.4, 0.12, D + 0.4, ry);
+    for (let u = a0 - 0.1; u <= a1 + 0.1; u += 0.3) { // the corrugation ribs
+      const [rx, ry2] = at(u, (b0 + b1) / 2);
+      boxes.add(0xc8c6bf, rx, top + H + 0.16, -ry2, 0.06, 0.05, D + 0.4, ry);
+    }
     for (const v of [b0 + 0.15, b1 - 0.15]) {
       const [bx, by] = at((a0 + a1) / 2, v);
       boxes.add(steel, bx, top + H - 0.12, -by, L, 0.22, 0.12, ry);

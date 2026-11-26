@@ -11,6 +11,10 @@
 // extras:  balcony (2nd-floor walkway with railing), tower (bell tower + spire), stair (exterior
 //          stair up the entrance wall), sign (navy campus sign: 'stone' pedestal, 'pole', 'wall'),
 //          number (building number by the door), fountain (at [lat, lon] or in front of a side), pool
+// siding:  'lap' (horizontal boards) or 'batten' (vertical board and batten) instead of stucco
+// bay:     color of a dark panel running floor to floor behind each window (the dorms)
+// ac:      a window AC unit under each window; floorBand: a trim band at each floor line
+// windows.frame: frame color when it differs from the trim (white vinyl frames)
 
 export const CAMPUS_STYLE = {
   wall: 0xcdb898, // tan/beige stucco
@@ -94,6 +98,38 @@ export const LOOKS = {
   },
   music: { roof: 0x6e5a52 },
 };
+
+// From the photos on the university's own campus map (cdn.maps.moderncampus.net map 530),
+// written down by hand. These refine or fill in the Street View notes above.
+const FROM_PHOTOS = {
+  // Dorms: two stories of tan stucco or beige lap siding, every window in a dark brown panel
+  // that runs floor to floor, a window AC unit under each one
+  hotchkiss: { wall: 0xc8ad86, trim: 0x4a3a2e, bay: 0x5a4434, ac: true, stories: 2 },
+  slight: { wall: 0xcdb48e, trim: 0x4a3528, ac: true, stories: 2, balcony: { rail: 0x2b2b2b } },
+  dixon: { wall: 0xcdbb98, trim: 0x4a3a2e, siding: 'lap', bay: 0x5a4434, ac: true, stories: 2 },
+  sweazy: { wall: 0xcdbb98, trim: 0x4a3a2e, siding: 'lap', bay: 0x5a4434, ac: true, stories: 2 },
+  waldock: { wall: 0x9e958a, trim: 0x3e352e, siding: 'lap', floorBand: 0x4a3a2e, stories: 3, windows: { shape: 'rect', size: 'medium', arrangement: 'even', tint: 'dark' } },
+  smith: { wall: 0xc3b8a6, trim: 0x5a4535, stories: 3, stoneBase: true, windows: { shape: 'rect', size: 'small', arrangement: 'scattered', tint: 'blue' } },
+  // The arcaded Reese Center: sand-colored stucco
+  reece: { wall: 0xcbb48e, trim: 0x6b4f3a },
+  // Ranch-style houses and offices under the oaks
+  chancellor: { wall: 0xb59e72, trim: 0x3a2e26, siding: 'batten', stories: 1, windows: { shape: 'rect', size: 'tall', arrangement: 'even', tint: 'dark' } },
+  vider: { wall: 0xa9a284, trim: 0x5a4a3a, siding: 'lap', stories: 1, windows: { shape: 'rect', size: 'medium', arrangement: 'scattered', tint: 'dark', frame: 0xf2f0ea } },
+  events: { wall: 0xe6dcc0, trim: 0x5a3e2e, siding: 'lap', stories: 1, porch: 'gable', windows: { shape: 'rect', size: 'medium', arrangement: 'even', tint: 'clear' } },
+  oaks: { wall: 0xe8dcb0, trim: 0x4a3a2e, siding: 'lap', stoneBase: true, stories: 1, windows: { shape: 'rect', size: 'storefront', arrangement: 'even', tint: 'dark' } },
+  king: { wall: 0xcdb896, trim: 0x4a3a2e, stoneBase: true, windows: { shape: 'rect', size: 'tall', arrangement: 'scattered', tint: 'dark' } },
+  // The modular offices: beige panel siding, brown trim, wooden steps
+  itadmin: { wall: 0xd2c4a0, trim: 0x5a4535, siding: 'batten', windows: { shape: 'rect', size: 'medium', arrangement: 'scattered', tint: 'dark' } },
+  wismer: { wall: 0xdccfa8, trim: 0x4a3a2e, siding: 'batten', windows: { shape: 'rect', size: 'medium', arrangement: 'scattered', tint: 'dark' } },
+  ods: { wall: 0xd2c4a0, trim: 0x5a3e2e, siding: 'batten', windows: { shape: 'rect', size: 'medium', arrangement: 'even', tint: 'dark', frame: 0x5a3e2e } },
+  kinesiology: { wall: 0xcdbf9e, siding: 'batten' },
+  // Powell Library: tan stucco, stacked-stone piers, a timber gable over the door
+  library: { wall: 0xd2bd92, piers: 'stone', porch: 'gable' },
+  // The Plew music building around the recital hall: yellow-tan stucco, brick pilasters with
+  // cypress between them, a second-floor walkway with a black railing
+  music: { wall: 0xd6bf8a, trim: 0x5a3e2e, piers: 'brick', balcony: { rail: 0x1e1e1e }, stories: 2 },
+};
+for (const [id, look] of Object.entries(FROM_PHOTOS)) LOOKS[id] = { ...(LOOKS[id] || {}), ...look };
 
 // The stone monument at the main entrance on Placerita Canyon Rd
 export const ENTRANCE_SIGN = { stone: 0x8a7f72, letters: '#c9b38f', slats: 0x8b6a4e, text: "THE MASTER'S UNIVERSITY", size: [6, 1.5] };
