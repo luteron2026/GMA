@@ -258,7 +258,10 @@ export function buildSurfaces(world) {
   for (const p of world.plazas || []) S.plaza.polygon(p, PAVE.plaza);
   // Courtyards, and fountain plazas with a darker border ring
   for (const c of world.site.courts) S.plaza.polygon(c.poly, '#cbc3b3');
-  for (const f of world.site.fountains) { S.lot.disc(f.x, f.y, f.plaza + 0.4, '#a79f8f', 40); S.plaza.disc(f.x, f.y, f.plaza, '#d3cbbb', 40); }
+  for (const f of world.site.fountains) {
+    S.lot.disc(f.x, f.y, f.plaza + 0.4, '#a79f8f', 40); S.plaza.disc(f.x, f.y, f.plaza, '#d3cbbb', 40);
+    if (f.style === 'stone') { S.plaza.disc(f.x, f.y, 4.4, '#a8664c', 40); S.plaza.disc(f.x, f.y, 3.6, '#cfc7b6', 40); } // the terracotta ring
+  }
 
   // Center and edge lines, with gaps where other streets cross
   const crossing = (r, m) => (x, y) => !streets.some((o) => o !== r && o.name !== r.name && distToPolyline(x, y, o.pts) < o.width / 2 + m);
