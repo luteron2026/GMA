@@ -82,18 +82,30 @@ NAMED = {
     'King Hall': dict(id='king', name='King Hall', color=0xe6d6b8),
     'Oaks Lounge': dict(id='oaks', name='Oaks Lounge', color=0xe6d6b8, small=True),
     'Events & Production': dict(id='events', name='Events & Production', color=0xd9cdb5, small=True),
-    'Vider Administrative Services': dict(id='vider', name='Vider Admin Services', color=0xe6d6b8, small=True),
-    "Chancellor's House": dict(id='chancellor', name="Chancellor's House", color=0xd8c3a0, small=True),
+    'Vider Administrative Services': dict(id='vider', name='Vider Admin Services', sub='Health Center', color=0xe6d6b8, small=True),
+    "Chancellor's House": dict(id='chancellor', name="Chancellor's House", sub='Development', color=0xd8c3a0, small=True),
     'School of Online Education': dict(id='online', name='Online Education', color=0xe6d6b8, small=True),
     'Pearl C. Schaffer School of Education Center': dict(id='education', name='Schaffer Center', sub='School of Education', color=0xe6d6b8),
     'Engineering & Computer Science Center': dict(id='engineering', name='Engineering & CS', color=0xe6d6b8),
     'Communication Center': dict(id='communication', name='Communication Center', color=0xe6d6b8),
-    'Kinesiology Center': dict(id='kinesiology', name='Kinesiology Center', color=0xd9d4c7),
+    # OSM calls this one the Kinesiology Center; the university's map has it as the fitness
+    # center, with the Kinesiology Center in the building east of it (not in OSM; world.js)
+    'Kinesiology Center': dict(id='kinesiology', name='ImpactOrtho Fitness Center', color=0xd9d4c7),
     'John P. Stead School of Humanities Center': dict(id='humanities', name='Stead Center', sub='School of Humanities', color=0xe6d6b8),
     'Business Center': dict(id='business', name='Business Center', color=0xe6d6b8),
     'Biblical Studies Center': dict(id='biblical', name='Biblical Studies Center', color=0xeadcc4),
     'Paul T. Plew School of Music Center': dict(id='music', name='Plew Center', sub='School of Music', color=0xe2cfa8),
     'Placerita Bible Church': dict(id='church', name='Placerita Bible Church', color=0xf2ede2, roofColor=0x7a5a48),
+}
+# Campus buildings OSM leaves unnamed, named from the university's own campus map
+# (cdn.maps.moderncampus.net map 530, whose markers carry lat/lon), by OSM way id
+NAMED_BY_WAY = {
+    '472555738': dict(id='itadmin', name='IT Administration Center', color=0xe6d6b8, small=True),
+    '472555725': dict(id='wismer', name='Wismer Technology Center', color=0xe6d6b8, small=True),
+    '472555734': dict(id='ods', name='Disability Services', sub='Academic Counseling', color=0xe6d6b8, small=True),
+    '472564535': dict(id='sportmgmt', name='Sport Management Center', color=0xe6d6b8, small=True),
+    '472564533': dict(id='plantops', name='Plant Operations', color=0xd9d4c7, small=True),
+    '472564529': dict(id='clubhouse', name='Soccer & Baseball Clubhouse', color=0xe6d6b8, small=True),
 }
 HOUSE_COLORS = [0xd8c3a0, 0xcfb894, 0xe3d3b4, 0xc9b08a, 0xe8dcc6, 0xbfae92]
 ROOF_COLORS = [0x8c4a3a, 0x9a5a44, 0x6e5a4e, 0x7d4436]
@@ -115,8 +127,8 @@ for wid, (tags, pts) in ways.items():
     name = t.get('name')
     h = float(t['height']) if 'height' in t else None
     entry = {}
-    if name in NAMED:
-        spec = dict(NAMED[name])
+    if name in NAMED or wid in NAMED_BY_WAY:
+        spec = dict(NAMED[name] if name in NAMED else NAMED_BY_WAY[wid])
         entry.update(id=spec['id'], name=spec['name'])
         if spec.get('sub'): entry['sub'] = spec['sub']
         entry['kind'] = 'dorm' if spec.get('dorm') else 'campus'
@@ -541,8 +553,11 @@ places = {
     'placeritos': open_near(-150, 232),
     'meadview': open_near(-62, 150),
     'quigley': open_near(166, 60),
-    'hillBase': open_near(45, -250, avoid_roads=False),
-    'hill': [30, -300],
+    # Prayer Hill is the knob above the Chancellor's House where the real white cross stands
+    # (seen from the main entrance on Placerita Canyon Rd); the climb starts where the trail up
+    # to it leaves campus
+    'hillBase': open_near(45, -168, avoid_roads=False),
+    'hill': [121, -231],
     'cartHotchkiss': open_near(-70, -95),
     'cartDunkin': open_near(150, -120),
     'cartDorms': open_near(-180, -135),

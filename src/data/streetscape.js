@@ -84,7 +84,7 @@ export const BEDS = [
 ];
 
 export const PROPS = [
-  { kind: 'flagpoles', at: [34.38245, -118.51790], count: 4 },
+  { kind: 'flagpoles', at: [34.38245, -118.51790], count: 8, street: 'Placerita Canyon Road' }, // blue and white, along Placerita by the stadium (campus maps)
   { kind: 'hydrant', at: [34.38209, -118.51776] },
   { kind: 'lotLights', at: [34.38225, -118.51690] },
   { kind: 'trashBins', at: [34.38428, -118.51800] },

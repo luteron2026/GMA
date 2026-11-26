@@ -9,6 +9,7 @@ import { pointInPoly, distToPolyline } from './physics.js';
 import { offsetLine } from './geo.js';
 import { STREETS } from './data/streetscape.js';
 import { paintCourts } from './sports.js';
+import { TRACED_PAVING, TRACED_WALKS, OPEN_GROUND } from './data/walks.js';
 
 export const PAVE = {
   street: '#3d4046',
@@ -92,11 +93,17 @@ export class Surface {
     }
   }
 
-  // Any simple polygon (concave is fine): triangulate, then drape each triangle
-  polygon(pts, color) {
+  // Any simple polygon (concave is fine, holes optional): triangulate, then drape each triangle
+  polygon(pts, color, holes = []) {
     const v2 = pts.map(([x, y]) => new THREE.Vector2(x, y));
     if (THREE.ShapeUtils.isClockWise(v2)) v2.reverse();
-    for (const t of THREE.ShapeUtils.triangulateShape(v2, [])) this.convex(t.map((k) => [v2[k].x, v2[k].y]), color);
+    const h2 = holes.map((h) => {
+      const v = h.map(([x, y]) => new THREE.Vector2(x, y));
+      if (!THREE.ShapeUtils.isClockWise(v)) v.reverse();
+      return v;
+    });
+    const all = v2.concat(...h2);
+    for (const t of THREE.ShapeUtils.triangulateShape(v2, h2)) this.convex(t.map((k) => [all[k].x, all[k].y]), color);
   }
 
   // A band of width w along a polyline, cut into short pieces, with round joins at bends.
@@ -245,6 +252,9 @@ export function buildSurfaces(world) {
     if (r.kind !== 'street') for (const p of [r.pts[0], r.pts[r.pts.length - 1]]) S[layer].disc(p[0], p[1], r.width / 2, r.kind === 'path' ? PAVE.walk : PAVE[r.kind]);
   }
   for (const w of world.walkways || []) S.walk.band(w.pts, w.width, PAVE.walk);
+  // The real walks and plazas traced from the aerial photo
+  for (const t of TRACED_PAVING) S.walk.polygon(t.poly, PAVE.walk, t.holes || []);
+  for (const t of TRACED_WALKS) S.walk.band(t.pts, t.width, PAVE.walk);
   for (const p of world.plazas || []) S.plaza.polygon(p, PAVE.plaza);
   // Courtyards, and fountain plazas with a darker border ring
   for (const c of world.site.courts) S.plaza.polygon(c.poly, '#cbc3b3');
@@ -405,6 +415,8 @@ export function makePavedTest(world) {
   for (const w of world.walkways || []) items.push({ line: w.pts, half: w.width / 2, ...box(w.pts, w.width / 2 + 8) });
   for (const l of CAMPUS.lots) items.push({ poly: l.poly, ...box(l.poly, 8) });
   for (const p of world.plazas || []) items.push({ poly: p, ...box(p, 8) });
+  for (const t of TRACED_PAVING) items.push({ poly: t.poly, ...box(t.poly, 8) });
+  for (const t of TRACED_WALKS) items.push({ line: t.pts, half: t.width / 2, ...box(t.pts, t.width / 2 + 8) });
   return (x, y, m = 0) => {
     for (const it of items) {
       if (x < it.x0 - m || x > it.x1 + m || y < it.y0 - m || y > it.y1 + m) continue;
@@ -416,8 +428,8 @@ export function makePavedTest(world) {
   };
 }
 
-// Concrete walks like a real campus: a pad and a walk from every entrance to the nearest
-// drive or lot, sidewalks along the campus drives, and walks linking nearby entrances.
+// Concrete walks: a pad and a walk from every entrance to the nearest drive, lot or real walk
+// (the real walks and plazas come from the aerial photo, data/walks.js).
 export function planWalkways(world, doorEdge) {
   const walks = [], pads = [];
   const buildings = world.buildings;
@@ -470,6 +482,20 @@ export function planWalkways(world, doorEdge) {
         cands.push([Math.hypot(s[0] - p[0], s[1] - p[1]), p]);
       }
     }
+    // ...or the nearest real walk or plaza from the aerial photo
+    const nearestOn = (line, closed) => {
+      let bd = Infinity, bp = null;
+      for (let i = 0; i < line.length - (closed ? 0 : 1); i++) {
+        const a = line[i], c = line[(i + 1) % line.length];
+        const dx = c[0] - a[0], dy = c[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+        const t = Math.max(0, Math.min(1, ((s[0] - a[0]) * dx + (s[1] - a[1]) * dy) / L2));
+        const p = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(s[0] - p[0], s[1] - p[1]);
+        if (d < bd) { bd = d; bp = p; }
+      }
+      return [bd, bp];
+    };
+    for (const t of TRACED_PAVING) { const [d, p] = nearestOn(t.poly, true); if (d < 70) cands.push([d, p]); }
+    for (const t of TRACED_WALKS) { const [d, p] = nearestOn(t.pts, false); if (d < 70) cands.push([Math.max(0, d - t.width / 2), p]); }
     cands.sort((p, q) => p[0] - q[0]);
     for (const [d, p] of cands.slice(0, 12)) {
       if (d > 70) break;
@@ -511,7 +537,7 @@ export function planWalkways(world, doorEdge) {
       const flush = () => {
         let L = 0;
         for (let i = 1; i < run.length; i++) L += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
-        if (L > 10) walks.push({ pts: [...run], width: 1.8 });
+        if (L > 10) walks.push({ pts: [...run], width: 1.8, guess: true });
         run.length = 0;
       };
       for (let i = 0; i < off.length - 1; i++) {
@@ -545,7 +571,67 @@ export function planWalkways(world, doorEdge) {
     const a = find(i), c = find(j);
     if (a === c) continue;
     parent[a] = c;
-    walks.push({ pts: [doors[i].s, doors[j].s], width: 2.4 });
+    walks.push({ pts: [doors[i].s, doors[j].s], width: 2.4, guess: true });
   }
-  return { walks, pads };
+  // The sidewalks along drives and the walks between entrances were guesses; the aerial photo
+  // now gives the real ones (TRACED_PAVING / TRACED_WALKS), so only each door's own short walk
+  // stays, cut back where the photo shows open ground
+  return { walks: pruneWalks(walks.filter((w) => !w.guess)), pads };
+}
+
+// Open lawn and bare ground in the aerial photo, as a 1 m grid (decoded once)
+let openGrid = null;
+export function openGroundAt(x, y) {
+  const g = OPEN_GROUND;
+  if (!openGrid) {
+    openGrid = new Uint8Array(g.w * g.h);
+    g.rle.split('|').forEach((row, r) => {
+      let c = 0, v = 0;
+      for (const n of row.split('.')) {
+        const len = parseInt(n, 36);
+        if (v) openGrid.fill(1, r * g.w + c, r * g.w + c + len);
+        c += len; v = 1 - v;
+      }
+    });
+  }
+  const c = Math.floor(x - g.x0), r = Math.floor(g.y1 - y);
+  return c >= 0 && r >= 0 && c < g.w && r < g.h && openGrid[r * g.w + c] === 1;
+}
+
+// The planned walks are a guess at where paths run. Cut them wherever the aerial photo shows
+// open lawn or dirt under the walk's whole width for more than a few meters (under trees the
+// photo can't tell, so those parts stay), and drop the leftover stubs.
+function pruneWalks(walks) {
+  const out = [];
+  for (const w of walks) {
+    const pts = w.pts, keep = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
+      const L = Math.hypot(bx - ax, by - ay), n = Math.max(1, Math.ceil(L / 0.5));
+      const nx = -(by - ay) / (L || 1), ny = (bx - ax) / (L || 1), o = w.width * 0.35;
+      for (let k = 0; k <= n; k++) {
+        if (k === 0 && i > 0) continue;
+        const x = ax + ((bx - ax) * k) / n, y = ay + ((by - ay) * k) / n;
+        const open = openGroundAt(x, y) && openGroundAt(x + nx * o, y + ny * o) && openGroundAt(x - nx * o, y - ny * o);
+        keep.push([x, y, open]);
+      }
+    }
+    // A run of open ground longer than 3 m ends one piece of the walk; shorter ones are kept
+    const finish = (run) => {
+      if (run.length < 2 || Math.hypot(run[0][0] - run[run.length - 1][0], run[0][1] - run[run.length - 1][1]) <= 2.5) return;
+      // (back to a point every 2 m; the walks are straight between their original corners)
+      out.push({ ...w, pts: run.filter((_, k) => k % 4 === 0 || k === run.length - 1).map(([x, y]) => [x, y]) });
+    };
+    let cur = [], pend = [];
+    for (const p of keep) {
+      if (p[2]) { pend.push(p); continue; }
+      if (pend.length * 0.5 <= 3) cur.push(...pend);
+      else { finish(cur); cur = []; }
+      pend = [];
+      cur.push(p);
+    }
+    if (pend.length * 0.5 <= 3) cur.push(...pend);
+    finish(cur);
+  }
+  return out;
 }

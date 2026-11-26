@@ -5,6 +5,7 @@ import { mat, makeLabel, GEOM } from './models.js';
 import { CORE, OUTER, groundY, heightAtCampus, shrubAt, inCore, roofFor, TREES, STRUCTURES, setTerrainStride } from './terrain.js';
 import { lookFor, wallTexture, wallEdge, planSite, paintSite, BoxBatch, addDetails, addSite, entranceMonument } from './buildings.js';
 import { CAMPUS_STYLE, ENTRANCE_SIGN } from './data/looks.js';
+import { PLACE_LABELS, ENCLOSED_STRUCTURES } from './data/places.js';
 import { planStreetscape, paintShoulders, paintBeds, buildStreetscape, bumpHeight, houseLook, treeNotes } from './streetscape.js';
 import { buildSurfaces, cleanStalls, planWalkways, makePavedTest } from './surfaces.js';
 import { buildSolarCarports } from './solar.js';
@@ -573,6 +574,8 @@ export class World {
       for (let gy = ey - 80; gy <= ey + 80; gy += 2) {
         if (!inCore(gx, gy) || !CAMPUS.campus.some((c) => pointInPoly(gx, gy, c))) continue;
         if (this.pavedAt(gx, gy, 7.5) || nearBuilding(gx, gy, 10)) continue;
+        // Away from the streets, where the power lines run
+        if (CAMPUS.roads.some((r) => r.kind === 'street' && distToPolyline(gx, gy, r.pts) < r.width / 2 + 16)) continue;
         if (fields.some((f) => pointInPoly(gx, gy, f) || distToPolyline(gx, gy, f, true) < 8)) continue;
         if (STRUCTURES.some(([sx, sy, len, wid]) => Math.hypot(sx - gx, sy - gy) < Math.max(len, wid) / 2 + 8)) continue;
         // Level: the ground under the pad varies by less than a meter
@@ -739,7 +742,7 @@ export class World {
 
     // Prayer Hill: a white cross in a clearing ringed with rocks, open toward the trail
     const [hx, hz] = this.places.hill;
-    const paint = mat(0xf4f2ec, { emissive: 0x2a2a28 });
+    const paint = mat(0xffffff, { emissive: 0x77777a }); // reads white even with the sun behind it
     const cy = groundY(hx, hz - 22);
     const v = new THREE.Mesh(GEOM.box, paint); v.scale.set(0.6, 10, 0.6); v.position.set(hx, cy + 4, hz - 22); v.castShadow = true; this.scene.add(v);
     const hb = new THREE.Mesh(GEOM.box, paint); hb.scale.set(4, 0.6, 0.6); hb.position.set(hx, cy + 6.8, hz - 22); this.scene.add(hb);
@@ -754,6 +757,8 @@ export class World {
       if (da < 0.3) continue; // trail gap
       const r = 35;
       const x = hx + Math.cos(a) * r, z = hz + Math.sin(a) * r;
+      // The hiking trails over the hilltop stay open
+      if (CAMPUS.roads.some((t) => t.kind === 'trail' && distToPolyline(x, -z, t.pts) < 4)) continue;
       const m = new THREE.Mesh(GEOM.sphere, rock);
       const sc = 3 + ((i * 37) % 5) * 0.4;
       m.scale.set(sc, sc * 0.7, sc);
@@ -766,6 +771,18 @@ export class World {
     hl.position.set(hx, cy + 13, hz - 22);
     this.scene.add(hl);
     this.labels.push(hl);
+
+    // Lawns, parking lots and other named places from the university's campus map
+    const BG = { lawn: 'rgba(52,110,58,0.85)', parking: 'rgba(30,70,150,0.85)', place: 'rgba(90,70,45,0.85)' };
+    for (const pl of PLACE_LABELS) {
+      const [x, z] = W(pl.at);
+      const text = pl.name;
+      const sub = pl.kind === 'parking' && !/Parking|Lot/.test(pl.name) ? `Parking ${pl.sub || ''}`.trim() : pl.kind === 'parking' && pl.sub ? `Parking ${pl.sub}` : pl.sub || null;
+      const lbl = makeLabel(text, sub, { width: Math.max(8, Math.min(13, text.length * 0.55)), bg: BG[pl.kind] });
+      lbl.position.set(x, groundY(x, z) + (pl.h ?? (pl.kind === 'parking' ? 4 : 5)), z);
+      this.scene.add(lbl);
+      this.labels.push(lbl);
+    }
   }
 
   // Green street-name signs at intersections, like the real ones
@@ -909,8 +926,8 @@ export class World {
     }
     const { blds, fields, pools } = this._plantCheck;
     if (this.pavedAt(x, y, m)) return false;
-    // Room for the parked tank and the helicopter's rotor
-    const spots = [[...this.places.tankSpot, 6], [...this.places.helipad, 8]];
+    // Room for the parked tank and the helicopter's rotor, and nothing hiding the hill cross
+    const spots = [[...this.places.tankSpot, 6], [...this.places.helipad, 8], [this.places.hill[0], this.places.hill[1] - 22, 0, 7]];
     if (this.places.forkliftSpot) spots.push([...this.places.forkliftSpot, 3.5]);
     for (const [px, pz, , r] of spots) if (Math.hypot(x - px, y + pz) < r) return false;
     for (const b of blds) {
@@ -953,6 +970,9 @@ export class World {
       let [tx, ty, h, r, kind, cb, dx, dy] = t;
       // Nothing growing out of pavement, buildings, sports fields or the pool deck
       if (!this.plantable(tx, ty, 0.6)) continue;
+      // ...or with a crown reaching over the helicopter's rotor
+      const hp = this.places.helipad;
+      if (Math.hypot(tx + dx - hp[0], ty + dy + hp[1]) < 7 + Math.min(r, h * 0.7 + 1)) continue;
       // The LiDAR crown can sit a few meters off the trunk; past ~1.5 m the trunk leans
       // unnaturally, so pull the crown back over it
       const lean = Math.hypot(dx, dy), maxLean = Math.min(1.5, h * 0.12);
@@ -1147,7 +1167,8 @@ export class World {
       const campus = this.inCampus(x, z);
       q.setFromAxisAngle(up, ang); // local x along the long side
       if (inLot) (this.lotCarports = this.lotCarports || []).push([cx, cy, Math.max(len, wid) / 2]);
-      if (inLot || len > 14) {
+      const enclosed = ENCLOSED_STRUCTURES.some(([ex, ey]) => Math.hypot(ex - cx, ey - cy) < Math.max(len, wid) / 2);
+      if (!enclosed && (inLot || len > 14)) {
         // Open carport / shade canopy: roof on posts, drive under it
         tops.push([m4.compose(v.set(x, gy + h - 0.15, z), q, sc.set(len, 0.3, wid)).clone(), campus && !inLot ? CAMPUS_STYLE.roof : 0x7d7f80]);
         for (const sx of [-0.45, 0.45]) for (const sz of [-0.42, 0.42]) {
