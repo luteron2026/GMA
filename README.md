@@ -171,3 +171,9 @@ python3 tools/naip_walks.py /tmp/walks src/data/walks.js
 - Surrounding mountains: [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (Mapzen/Tilezen). 3DEP data courtesy of the U.S. Geological Survey.
 - All models, textures, and sounds are generated in code. There are no third-party art assets.
 - Inspired by the "good deeds instead of crimes" premise of the Babylon Bee's *Grand Faith Auto*. All characters, missions, and art here are original.
+
+
+
+Notes:
+https://cdn.maps.moderncampus.net/nucloudmap/index.html?map=530&marker=13058&zoom=3&x=4915.96343408198&y=-2309.221764348892&layer=all%2Crecreational+area#
+https://www.masters.edu/life-at-tmu/housing-and-dining/
