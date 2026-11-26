@@ -31,7 +31,7 @@ export class Vehicle {
 
   get fx() { return Math.sin(this.heading); }
   get fz() { return Math.cos(this.heading); }
-  get name() { return this.spec.label; }
+  get name() { return this.label || this.spec.label; }
 
   addDriver() {
     if (this.driver) return;

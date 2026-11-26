@@ -176,7 +176,7 @@ export class HUD {
     this.vehEl.textContent = v ? `${v.name} · ${Math.round(Math.abs(v.speed) * 2.237)} mph` : '';
     this.clockEl.textContent = g.clockText();
     // Street name (or area) under the player, GTA style
-    const street = g.world.streetAt(g.player.x, g.player.z) || (g.world.inCampus(g.player.x, g.player.z) ? "The Master's University" : 'Placerita Canyon');
+    const street = g.interior ? g.interior.name : g.world.streetAt(g.player.x, g.player.z) || (g.world.inCampus(g.player.x, g.player.z) ? "The Master's University" : 'Placerita Canyon');
     if (street !== this.lastStreet) {
       this.lastStreet = street;
       this.streetEl.textContent = street;
