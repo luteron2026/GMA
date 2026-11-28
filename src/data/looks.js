@@ -30,10 +30,11 @@ export const CAMPUS_STYLE = {
 };
 
 export const LOOKS = {
+  // Tan stucco and dark-framed storefront glass; the Mustang Grill's deck, its timber gable
+  // pavilion, the pergola and the stone piers are built in grill.js
   dunkin: {
-    wall: 0xcbb89a, trim: 0x4a3a2e, roof: 0xe6e6e2, stories: 2,
+    wall: 0xd2bd98, trim: 0x3e2f25, roof: 0xe6e6e2, stories: 2,
     windows: { shape: 'rect', size: 'storefront', arrangement: 'even', tint: 'dark' },
-    piers: 'stone', porch: 'gable', balcony: { rail: 0x2b2b2b },
   },
   oaks: { roof: 0x6b5a50 },
   church: {
