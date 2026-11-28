@@ -14,6 +14,7 @@ import { planPitch, paintPitch, buildPitch } from './soccer.js';
 import { planDixonFireplace, DixonFireplace } from './fireplace.js';
 import { buildTrophyCoffee, buildTrophyNorth } from './trophy.js';
 import { planGuardShack, buildGuardShack } from './shack.js';
+import { planMustangGrill, buildMustangGrill } from './grill.js';
 
 // Convert campus (x east, y north) to world [x, z]
 export const W = ([x, y]) => [x, -y];
@@ -66,6 +67,7 @@ export class World {
     this.walkways = walks.walks;
     this.plazas = walks.pads;
     this.planTrophy();
+    planMustangGrill(this); // the Mustang Grill's decks on the Dunkin Student Center
     planGuardShack(this); // the Campus Safety booth at the entrance drive
     this.fireSpot = planDixonFireplace(this); // the outdoor fireplace in Dixon's courtyard
     this.pavedAt = makePavedTest(this); // campus-space test: streets, drives, lots, walks
@@ -93,6 +95,7 @@ export class World {
     buildCourts(this, extra);
     buildPitch(this, extra);
     this.buildTrophy(extra);
+    buildMustangGrill(this, extra);
     buildGuardShack(this, extra);
     buildTrophyNorth(this, extra); // the walk-up window on North Campus
     if (this.fireSpot) this.fireplace = new DixonFireplace(this, this.fireSpot, extra);
@@ -412,6 +415,7 @@ export class World {
       const stories = look && look.stories ? Math.min(look.stories, Math.max(1, Math.floor(eave / 2.7))) : fit;
       geo.stories = stories;
       geo.floorH = Math.min(5, Math.max(2.8, eave / stories));
+      b.floorH = geo.floorH;
       if (b.name) {
         const wt = wallTexture(look);
         const tex = wt.tex.clone();
@@ -1162,6 +1166,7 @@ export class World {
       const probe = [[0, 0], [-0.3, -0.3], [0.3, -0.3], [0.3, 0.3], [-0.3, 0.3]].map(([a, b]) => at(a * len, b * wid));
       const covered = probe.filter(([px, pz]) => this.buildings.some((b) => pointInPoly(px, pz, b.wpts))).length;
       if (covered >= 2) continue;
+      if (this.grill && this.grill.covers(cx, cy)) continue; // the Mustang Grill's deck (grill.js)
       if (!inLot && this.pavedAt(cx, cy, 0)) continue; // nothing standing in the road
       // In a lot, a canopy whose posts would stand in a drive aisle is something parked
       if (inLot && [[-0.45, -0.42], [0.45, -0.42], [0.45, 0.42], [-0.45, 0.42]].some(([a, b]) => {

@@ -175,6 +175,7 @@ const T = {
 // ---------- the building kit ----------
 
 const BOX = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0); // origin at the bottom
+const INST_E = new THREE.Euler(0, 0, 0, 'YXZ');
 
 class Kit {
   constructor(scene) {
@@ -182,6 +183,32 @@ class Kit {
     this.solids = []; // [x0, z0, x1, z1] footprints the player can't walk through
     this.people = [];
     this.anim = [];
+    this.batches = new Map(); // instanced copies, drawn at flush()
+  }
+  // Many copies of one shape and color, drawn as one instanced mesh when the room is done.
+  // (x, y, z) is the center; ry turns it about y, then rz/rx tilt it ('YXZ': rz tilts local x up)
+  inst(geo, color, x, y, z, sx, sy, sz, { ry = 0, rz = 0, rx = 0, basic = false, double = false } = {}) {
+    const key = geo.uuid + '|' + color + '|' + basic + '|' + double;
+    let s = this.batches.get(key);
+    if (!s) {
+      const opts = double ? { side: THREE.DoubleSide } : {};
+      this.batches.set(key, (s = { geo, material: basic ? new THREE.MeshBasicMaterial({ color, ...opts }) : mat(color, opts), list: [] }));
+    }
+    INST_E.set(rx, ry, rz);
+    s.list.push(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(INST_E), new THREE.Vector3(sx, sy, sz)));
+  }
+  // A beam between two points (instanced box of thickness t x d)
+  member(color, a, b, t, d = t) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], h = Math.hypot(dx, dz);
+    this.inst(GEOM.box, color, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2, Math.hypot(h, dy), t, d, { ry: Math.atan2(-dz, dx), rz: Math.atan2(dy, h) });
+  }
+  flush() {
+    for (const { geo, material, list } of this.batches.values()) {
+      const m = new THREE.InstancedMesh(geo, material, list.length);
+      list.forEach((mm, i) => m.setMatrixAt(i, mm));
+      this.scene.add(m);
+    }
+    this.batches.clear();
   }
   m(color, opts) { return typeof color === 'object' && color.isMaterial ? color : mat(color, opts); }
   // A box standing on y (bottom), centered on x/z; rot turns it about y
@@ -359,6 +386,458 @@ function sofa(k, color, x, z, rot, w = 2.0) {
   k.box(color, x - s * 0.38, 0.12, z - c * 0.38, w, 0.75, 0.2, { rot });
   for (const e of [-1, 1]) k.box(color, x + c * e * (w / 2 - 0.1), 0.12, z - s * e * (w / 2 - 0.1), 0.2, 0.55, 0.9, { rot });
   k.box(0x2a2a2a, x, 0, z, w - 0.1, 0.12, 0.8, { rot });
+}
+
+// ---------- the Mustang Grill ----------
+
+// From photos of the dining hall: one long room under a black gable ceiling, carried on
+// tan-painted trusses (W webs, bolted plates at the joints) running both ways, skylights
+// along the ridge, rows of white prismatic-glass pendants; navy-gray carpet tiles with beige
+// tile round the serving areas; white-topped tables on black T-legs with bentwood chairs; on
+// the left a curved honey-wood serving counter with its pastry case under a curved white
+// soffit hung with little amber pendants, queue stanchions in front; the open kitchen at the
+// back (a stainless hood, a round cherry station, the hot line behind glass); the salad island
+// under another curved soffit on the right; and along the deck side, floor-to-ceiling French
+// doors between stacked-stone piers with a stone fireplace. Through the open doors: the deck
+// under its timber roof, with patio heaters, slatted tables and the trees over Placerita.
+// G0 is where the room starts along z. Returns its rooms, portals and spots.
+const DOME = new THREE.SphereGeometry(0.5, 14, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+const SHELL = new THREE.CylinderGeometry(0.22, 0.22, 0.26, 10, 1, true, Math.PI - 1.05, 2.1);
+const ROCK = new THREE.IcosahedronGeometry(1, 0);
+
+const stoneMats = new Map();
+function stone(k, x, y, z, w, h, d, seed = 7) {
+  const key = [w, h, d, seed].map((v) => v.toFixed(1)).join('|');
+  if (!stoneMats.has(key)) stoneMats.set(key, new THREE.MeshLambertMaterial({ map: tex(T.ledger(seed, ['#8d7b66', '#6f6254', '#a69178', '#5d544b', '#9a8670', '#7d6e60', '#b39c80', '#6a6a66']), [Math.max(w, d) / 1.3, h / 1.3]) }));
+  return k.box(stoneMats.get(key), x, y, z, w, h, d, { solid: y < 1 });
+}
+
+// A curved counter: an arc of radius r about (cx, cz) from angle a0 to a1 (x = cx + r cos a,
+// z = cz + r sin a), its front facing out
+function curvedCounter(k, cx, cz, r, a0, a1, { front = 0xc9813f, band = 0xe8b678, top = 0xc4c7ca, depth = 0.8, guard = true, soffit = 0, lamps = 0 } = {}) {
+  const t0 = Math.PI / 2 - a1, tl = a1 - a0; // three's cylinder angle runs from +z toward +x
+  const add = (geo, m, y) => { const o = new THREE.Mesh(geo, m); o.position.set(cx, y, cz); k.scene.add(o); return o; };
+  add(new THREE.CylinderGeometry(r, r, 0.74, 32, 1, true, t0, tl), mat(front, { side: THREE.DoubleSide }), 0.37);
+  add(new THREE.CylinderGeometry(r + 0.01, r + 0.01, 0.18, 32, 1, true, t0, tl), mat(band, { side: THREE.DoubleSide }), 0.83);
+  add(new THREE.CylinderGeometry(r - 0.04, r - 0.04, 0.1, 32, 1, true, t0, tl), mat(0x2a2420, { side: THREE.DoubleSide }), 0.05);
+  add(new THREE.CylinderGeometry(r + 0.06, r + 0.06, 0.05, 32, 1, false, t0, tl), mat(top), 0.945);
+  const hole = add(new THREE.CylinderGeometry(r - depth, r - depth, 0.06, 32, 1, false, t0, tl), mat(0x6a6460), 0.95);
+  hole.scale.y = 1.05;
+  if (guard) {
+    add(new THREE.CylinderGeometry(r - 0.25, r - 0.25, 0.42, 32, 1, true, t0, tl), new THREE.MeshLambertMaterial({ color: 0xd6ecf2, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }), 1.27);
+    add(new THREE.CylinderGeometry(r - 0.2, r - 0.2, 0.03, 32, 1, false, t0, tl), mat(0xc4c7ca), 1.5);
+  }
+  if (soffit) {
+    add(new THREE.CylinderGeometry(soffit, soffit, 0.55, 40, 1, false, t0 - 0.15, tl + 0.3), mat(0xf7f6f2), 3.75);
+    for (let a = a0 + 0.08; a < a1; a += 0.19) {
+      const x = cx + Math.cos(a) * (r - 0.35), z = cz + Math.sin(a) * (r - 0.35);
+      k.inst(GEOM.box, 0x1b1b1b, x, 3.05, z, 0.012, 0.9, 0.012);
+      k.inst(GEOM.cyl, lamps || 0xf0b866, x, 2.5, z, 0.13, 0.22, 0.13, { basic: true });
+    }
+  }
+  // what you bump into: little boxes along the arc
+  for (let a = a0; a <= a1 + 1e-6; a += 0.16) {
+    const x = cx + Math.cos(a) * (r - depth / 2), z = cz + Math.sin(a) * (r - depth / 2);
+    k.solid(x - 0.45, z - 0.45, x + 0.45, z + 0.45);
+  }
+}
+
+// White table on black T-legs with bentwood chairs, `seats` per side (x along the table)
+function grillTable(k, x, z, r, seats = 2, people = 0.3) {
+  k.inst(GEOM.box, 0xeeebe3, x, 0.74, z, 1.8, 0.04, 0.76);
+  k.inst(GEOM.box, 0xb9b4aa, x, 0.715, z, 1.82, 0.012, 0.78);
+  for (const dx of [-0.6, 0.6]) {
+    k.inst(GEOM.cyl, 0x161616, x + dx, 0.36, z, 0.07, 0.72, 0.07);
+    k.inst(GEOM.box, 0x161616, x + dx, 0.02, z, 0.06, 0.04, 0.62);
+    k.inst(GEOM.box, 0x161616, x + dx, 0.7, z, 0.06, 0.03, 0.5);
+  }
+  k.solid(x - 0.9, z - 0.38, x + 0.9, z + 0.38);
+  const offs = seats === 3 ? [-0.6, 0, 0.6] : [-0.45, 0.45];
+  for (const side of [-1, 1]) for (const dx of offs) {
+    const cxp = x + dx, czp = z + side * 0.72, face = side > 0 ? Math.PI : 0;
+    bentwood(k, cxp, czp, face);
+    if (r() < people) k.person(cxp, czp - side * 0.05, face, { sit: 0.47 });
+  }
+  if (r() < 0.55) { const dx = (r() - 0.5) * 1.0; k.inst(GEOM.box, 0x7a2a2a, x + dx, 0.77, z - 0.15, 0.42, 0.02, 0.32); k.inst(GEOM.cyl, 0xf4f1ea, x + dx, 0.79, z - 0.15, 0.26, 0.02, 0.26); }
+}
+
+// The round-backed bentwood chair: a wood seat and curved back on black legs, facing `face`
+function bentwood(k, x, z, face) {
+  const s = Math.sin(face), c = Math.cos(face);
+  const wood = 0x8a4b26;
+  k.inst(GEOM.cyl, wood, x, 0.46, z, 0.44, 0.045, 0.42);
+  k.inst(SHELL, wood, x, 0.75, z, 1, 1, 1, { ry: face, double: true });
+  for (const [a, b] of [[-0.17, -0.15], [0.17, -0.15], [-0.15, 0.16], [0.15, 0.16]]) k.inst(GEOM.cyl, 0x1b1b1b, x + a * c + b * s, 0.22, z - a * s + b * c, 0.025, 0.44, 0.025);
+  for (const a of [-0.13, 0.13]) k.inst(GEOM.box, 0x1b1b1b, x + a * c - 0.19 * s, 0.56, z - a * s - 0.19 * c, 0.02, 0.2, 0.02);
+}
+
+// Slatted wood deck table with ladder-back chairs, and a patio heater
+function deckTable(k, x, z, rot, r, round = false) {
+  const wood = 0x5c3b25, c = Math.cos(rot), s = Math.sin(rot);
+  if (round) k.inst(GEOM.cyl, wood, x, 0.74, z, 1.1, 0.05, 1.1);
+  else {
+    k.inst(GEOM.box, wood, x, 0.74, z, 1.6, 0.05, 0.9, { ry: rot });
+    for (let i = 1; i < 6; i++) { const u = -0.8 + i * 0.267; k.inst(GEOM.box, 0x3a2618, x + u * c, 0.766, z - u * s, 0.02, 0.01, 0.88, { ry: rot }); }
+  }
+  k.inst(GEOM.box, 0x2a2420, x, 0.36, z, 0.08, 0.72, 0.08);
+  k.inst(GEOM.box, 0x2a2420, x, 0.02, z, 0.7, 0.04, 0.6, { ry: rot });
+  k.solid(x - 0.75, z - 0.75, x + 0.75, z + 0.75);
+  const spots = round ? [0, 1, 2, 3].map((i) => [Math.cos(i * 1.57 + 0.5) * 0.95, Math.sin(i * 1.57 + 0.5) * 0.95]) : [[-0.42, -0.8], [0.42, -0.8], [-0.42, 0.8], [0.42, 0.8]];
+  for (const [u, v] of spots) {
+    const px = x + u * c + v * s, pz = z - u * s + v * c;
+    const face = Math.atan2(x - px, z - pz);
+    ladderChair(k, px, pz, face);
+    if (r() < 0.3) k.person(px, pz, face, { sit: 0.47 });
+  }
+}
+function ladderChair(k, x, z, face) {
+  const s = Math.sin(face), c = Math.cos(face), wood = 0x4e3322;
+  const at = (f, sd) => [x + s * f + c * sd, z + c * f - s * sd]; // f: forward, sd: sideways
+  k.inst(GEOM.box, wood, x, 0.45, z, 0.44, 0.05, 0.42, { ry: face });
+  for (const sd of [-0.19, 0.19]) {
+    const [fx, fz] = at(0.18, sd); k.inst(GEOM.box, wood, fx, 0.22, fz, 0.045, 0.44, 0.045, { ry: face });
+    const [bx, bz] = at(-0.19, sd); k.inst(GEOM.box, wood, bx, 0.49, bz, 0.05, 0.98, 0.05, { ry: face });
+  }
+  { const [bx, bz] = at(-0.19, 0); k.inst(GEOM.box, wood, bx, 0.93, bz, 0.42, 0.08, 0.04, { ry: face }); }
+  for (const sd of [-0.11, -0.037, 0.037, 0.11]) { const [bx, bz] = at(-0.19, sd); k.inst(GEOM.box, wood, bx, 0.69, bz, 0.035, 0.42, 0.02, { ry: face }); }
+}
+function heater(k, x, z) {
+  k.inst(GEOM.cyl, 0xb9bcbf, x, 0.35, z, 0.5, 0.7, 0.5);
+  k.inst(GEOM.cyl, 0xb9bcbf, x, 1.3, z, 0.11, 1.3, 0.11);
+  k.inst(GEOM.cyl, 0x2a2a2a, x, 2.05, z, 0.3, 0.32, 0.3);
+  k.inst(GEOM.cyl, 0xff8a3a, x, 1.95, z, 0.24, 0.08, 0.24, { basic: true });
+  k.inst(GEOM.cone8, 0x9a9da0, x, 2.35, z, 1.15, 0.28, 1.15);
+  k.solid(x - 0.3, z - 0.3, x + 0.3, z + 0.3);
+}
+
+// A deck railing from (x0, z0) to (x1, z1): brown posts and top rail, black pickets
+function deckRail(k, x0, z0, x1, z1) {
+  const len = Math.hypot(x1 - x0, z1 - z0), ux = (x1 - x0) / len, uz = (z1 - z0) / len, ry = Math.atan2(-uz, ux);
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  k.inst(GEOM.box, 0x4a3426, cx, 1.07, cz, len, 0.07, 0.16, { ry });
+  k.inst(GEOM.box, 0x1e1e1e, cx, 0.95, cz, len, 0.05, 0.05, { ry });
+  k.inst(GEOM.box, 0x1e1e1e, cx, 0.13, cz, len, 0.05, 0.05, { ry });
+  const n = Math.max(1, Math.round(len / 1.9));
+  for (let i = 0; i <= n; i++) k.inst(GEOM.box, 0x4a3426, x0 + (x1 - x0) * i / n, 0.55, z0 + (z1 - z0) * i / n, 0.13, 1.1, 0.13, { ry });
+  for (let d = 0.1; d < len; d += 0.12) k.inst(GEOM.box, 0x1e1e1e, x0 + ux * d, 0.54, z0 + uz * d, 0.022, 0.82, 0.022);
+  k.solid(Math.min(x0, x1) - 0.08, Math.min(z0, z1) - 0.08, Math.max(x0, x1) + 0.08, Math.max(z0, z1) + 0.08);
+}
+
+// What you see from the deck: sky over the golden Placerita hills, oaks and pines below the
+// rail, the road, the power line along it
+function deckView(k, x0, zA, zB, floorY) {
+  const [c, x] = canvas(1024, 512);
+  const g = x.createLinearGradient(0, 0, 0, 512);
+  g.addColorStop(0, '#7fa9d6'); g.addColorStop(0.52, '#cfe0ec'); g.addColorStop(0.6, '#e3ebe9'); g.addColorStop(1, '#9aa77a');
+  x.fillStyle = g; x.fillRect(0, 0, 1024, 512);
+  const r = rng(31);
+  for (const [base, col, amp] of [[300, '#b9a678', 40], [318, '#a49466', 26], [330, '#7f8a5a', 14]]) {
+    x.fillStyle = col; x.beginPath(); x.moveTo(0, 512);
+    for (let i = 0; i <= 1024; i += 16) x.lineTo(i, base - amp * (0.5 + 0.5 * Math.sin(i * 0.006 + base)) - r() * amp * 0.3);
+    x.lineTo(1024, 512); x.fill();
+  }
+  const sky = tex(c);
+  const span = zB - zA;
+  // three walls of view round the deck: out past the rail and both ends
+  const H = 60, yC = floorY + 6;
+  k.panel(new THREE.MeshBasicMaterial({ map: sky }), x0, yC, (zA + zB) / 2, span, H, Math.PI / 2);
+  for (const [z, rot] of [[zA, 0], [zB, Math.PI]]) k.panel(new THREE.MeshBasicMaterial({ map: sky }), (x0 - 14) / 2, yC, z, -x0 - 14 + 30, H, rot);
+  // the ground falling away below the deck
+  const gr = new THREE.Mesh(new THREE.PlaneGeometry(-x0, span), new THREE.MeshLambertMaterial({ map: tex(T.mottled('#7d8f4e', 0.1), [8, 8]) }));
+  gr.rotation.x = -Math.PI / 2; gr.position.set(x0 / 2, floorY - 4.6, (zA + zB) / 2); k.scene.add(gr);
+  // Placerita Canyon Rd and the power line along it
+  const roadX = -42;
+  k.inst(GEOM.box, 0x3a3a3e, roadX, floorY - 4.58, (zA + zB) / 2, 9, 0.02, span);
+  k.inst(GEOM.box, 0xe2c23a, roadX, floorY - 4.56, (zA + zB) / 2, 0.25, 0.02, span);
+  for (let z = zA + 6; z < zB; z += 22) {
+    k.inst(GEOM.cyl, 0x5a4434, roadX + 6, floorY + 2.4, z, 0.32, 14, 0.32);
+    k.inst(GEOM.box, 0x5a4434, roadX + 6, floorY + 8.6, z, 0.16, 0.16, 2.4);
+  }
+  for (const dz of [-1.0, 0, 1.0]) k.inst(GEOM.box, 0x1a1a1a, roadX + 6 + dz, floorY + 8.75, (zA + zB) / 2, 0.025, 0.025, span);
+  // oaks and pines
+  const oak = [0x4f6b33, 0x5d7a3a, 0x3f5a2c, 0x6b7f40];
+  for (let i = 0; i < 46; i++) {
+    const tx = -24 - r() * 34, tz = zA + 2 + r() * (span - 4);
+    if (Math.abs(tx - roadX) < 6) continue;
+    const near = tx > -32;
+    const h = (near ? 5.5 : 6.5) + r() * 3, cr = 2 + r() * 2.2;
+    const base = floorY - 4.6;
+    k.inst(GEOM.cyl, 0x4a3628, tx, base + h / 2, tz, 0.4, h, 0.4);
+    if (r() < 0.18) k.inst(GEOM.cone8, 0x2f4a2c, tx, base + h + 1.5, tz, cr * 1.4, h * 0.9, cr * 1.4);
+    else k.inst(ROCK, oak[i % 4], tx, base + h + cr * 0.4, tz, cr * 1.25, cr * 0.85, cr * 1.15, { ry: r() * 6 });
+  }
+  // a neighbor's roof through the trees
+  k.inst(GEOM.box, 0x6e6a64, -37, floorY - 1.6, zA + span * 0.35, 8, 0.4, 10);
+}
+
+// Built mirrored (x -> -x), so that coming up the stairs the serving counter, the French
+// doors and the deck are on your left and the salad island on your right, as in the photos.
+// Text is flipped back so it still reads.
+function mustangGrill(k, G0) {
+  k.flush();
+  const scene0 = k.scene, solids0 = k.solids.length;
+  const group = new THREE.Group();
+  group.scale.x = -1;
+  scene0.add(group);
+  k.scene = group;
+  const out = mustangGrillRoom(k, G0);
+  k.flush();
+  k.scene = scene0;
+  for (let i = solids0; i < k.solids.length; i++) { const [x0, z0, x1, z1] = k.solids[i]; k.solids[i] = [-x1, z0, -x0, z1]; }
+  return {
+    rooms: out.rooms.map(([x0, z0, x1, z1, h]) => [-x1, z0, -x0, z1, h]),
+    arrive: [-out.arrive[0], out.arrive[1], -out.arrive[2]],
+    portal: { ...out.portal, x: -out.portal.x },
+    spots: out.spots.map((q) => ({ ...q, x: -q.x })),
+  };
+}
+
+function mustangGrillRoom(k, G0) {
+  const XL = -14, XR = 14, D = 22, HW = 4.6, HR = 7.0;
+  const Z = (z) => G0 + z;
+  const white = 0xf2f0ea, truss = 0xd2b680, plate = 0xb89c66;
+  const r = rng(17);
+  const ceilAt = (x) => HR - (Math.abs(x) / XR) * (HR - HW);
+
+  // ---- floor: navy-gray carpet tiles, beige tile round the serving areas ----
+  k.floor(new THREE.MeshLambertMaterial({ map: tex(T.carpetTiles('#3b4352'), [9, 7]) }), XL, G0, XR, Z(D));
+  const tile = new THREE.MeshLambertMaterial({ map: tex(T.tiles('#ddd3c1', '#c6bcab', 4, 0.04), [1, 1]) });
+  const tileArea = (x0, z0, x1, z1) => { const m = tile.clone(); m.map = tile.map.clone(); m.map.repeat.set((x1 - x0) / 2.4, (z1 - z0) / 2.4); m.map.needsUpdate = true; k.floor(m, x0, z0, x1, z1, 0.006); };
+  tileArea(XL, G0, -8.4, Z(9.6));
+  tileArea(XL, Z(16.2), XR, Z(D));
+  tileArea(9.4, G0, XR, Z(16.2));
+  // yellow "+" spacing markers along the queue and by the tables
+  for (const [x, z] of [[-8.7, Z(2.2)], [-8.7, Z(4.4)], [-8.7, Z(6.6)], [-10.4, Z(8.4)], [6.0, Z(1.4)], [9.8, Z(14.8)]]) {
+    k.inst(GEOM.box, 0xf2c200, x, 0.012, z, 0.34, 0.01, 0.07);
+    k.inst(GEOM.box, 0xf2c200, x, 0.013, z, 0.07, 0.01, 0.34);
+  }
+
+  // ---- walls ----
+  const SIDE = [[1.0, 4.1, 'win'], [5.0, 8.1, 'win'], [9.0, 11.2, 'door'], [16.6, 19.6, 'win']];
+  const PIERS = [[4.1, 5.0], [8.1, 9.0], [11.2, 12.2], [15.6, 16.6], [19.6, 20.5]];
+  k.wall(white, XL, G0, XL, Z(D), HW, SIDE.map(([a, b]) => [a, b, 3.5]));
+  k.wall(0xd2bd98, XL - 0.16, G0, XL - 0.16, Z(D), HW, SIDE.map(([a, b]) => [a, b, 3.5]), 0.1); // tan stucco outside
+  for (const [a, b, kind] of SIDE) {
+    if (kind === 'door') {
+      // the open French doors to the deck, leaves swung back against the wall
+      for (const [z, s] of [[Z(a) + 0.08, 1], [Z(b) - 0.08, -1]]) { k.box(0x3a2a1e, XL - 0.55, 0, z, 1.05, 2.9, 0.06, { rot: 0 }); k.panel(new THREE.MeshBasicMaterial({ color: 0xb9d3e2 }), XL - 0.55, 1.45, z + s * 0.035, 0.85, 2.6, s > 0 ? Math.PI : 0); }
+      k.box(0x3a2a1e, XL, 3.4, (Z(a) + Z(b)) / 2, 0.24, 0.12, b - a);
+      k.window(XL + 0.12, 2.95, (Z(a) + Z(b)) / 2, b - a, 0.5, Math.PI / 2, 0x3a2a1e, 2);
+    } else k.window(XL + 0.12, 0.02, (Z(a) + Z(b)) / 2, b - a, 3.4, Math.PI / 2, 0x3a2a1e, 4);
+  }
+  for (const [a, b] of PIERS) {
+    stone(k, XL + 0.2, 0, (Z(a) + Z(b)) / 2, 0.5, HW, b - a, Math.round(a));
+    stone(k, XL - 0.45, -4.6, (Z(a) + Z(b)) / 2, 0.55, HW + 4.6, b - a, Math.round(b));
+  }
+  // the stacked-stone fireplace, up to the trusses, a dark firebox with a fire in it
+  {
+    const zc = Z(13.9), w = 3.4;
+    stone(k, XL + 0.45, 0, zc, 0.9, HW, w, 3);
+    stone(k, XL + 0.95, 0, zc, 0.7, 0.42, w + 0.3, 5); // raised hearth
+    k.panel(new THREE.MeshBasicMaterial({ color: 0x0d0b0a }), XL + 0.91, 0.95, zc, 1.4, 1.0, -Math.PI / 2);
+    k.box(0x3a2a1e, XL + 0.97, 1.7, zc, 0.2, 0.22, 2.2); // mantel
+    const fire = [];
+    for (const [dz, h, col] of [[-0.3, 0.45, 0xff9a3a], [0.05, 0.6, 0xffc24a], [0.35, 0.4, 0xff7a2a]]) {
+      const f = k.box(new THREE.MeshBasicMaterial({ color: col }), XL + 0.7, 0.5, zc + dz, 0.25, h, 0.22);
+      fire.push([f, h]);
+    }
+    k.box(0x3a2418, XL + 0.7, 0.45, zc, 0.3, 0.1, 1.0);
+    k.anim.push((dt, t) => { for (const [f, h] of fire) f.scale.y = h * (0.75 + 0.25 * Math.sin(t * 9 + h * 20) + 0.1 * Math.sin(t * 23 + h * 7)); });
+    for (const dz of [-1.1, 1.1]) {
+      // leather club chairs facing the fire
+      const x = XL + 2.6, z = zc + dz;
+      k.box(0x5a3020, x, 0.1, z, 0.85, 0.35, 0.85, { solid: true });
+      k.box(0x5a3020, x + 0.36, 0.1, z, 0.15, 0.85, 0.85);
+      for (const s of [-1, 1]) k.box(0x5a3020, x, 0.1, z + s * 0.38, 0.85, 0.6, 0.12);
+    }
+    k.person(XL + 2.5, zc - 1.1, -Math.PI / 2, { sit: 0.47, pose: (p) => { p.armL.rotation.x = -0.9; p.armR.rotation.x = -0.9; } });
+  }
+  k.wall(white, XR, G0, XR, Z(D), HW, [[18.4, 20.6, 1.6]]); // right, with the dish return window
+  k.wall(white, XL, G0, XR, G0, HW, [[10.4, 12.4, 2.6]]); // front, the stairs down
+  k.wall(white, XL, Z(D), XR, Z(D), HW);
+  const gable = new THREE.ShapeGeometry(new THREE.Shape([new THREE.Vector2(XL, HW), new THREE.Vector2(XR, HW), new THREE.Vector2(0, HR)]));
+  for (const z of [G0 + 0.1, Z(D) - 0.1]) { const m = new THREE.Mesh(gable, mat(white, { side: THREE.DoubleSide })); m.position.z = z; k.scene.add(m); }
+
+  // ---- the black gable ceiling, skylights along the ridge ----
+  const slope = Math.atan2(HR - HW, XR), sl = Math.hypot(XR, HR - HW);
+  for (const s of [-1, 1]) {
+    const c = new THREE.Mesh(new THREE.PlaneGeometry(sl, D), mat(0x232428, { side: THREE.DoubleSide }));
+    c.rotation.set(Math.PI / 2, 0, -s * slope, 'ZXY');
+    c.position.set(s * XR / 2, (HW + HR) / 2, Z(D / 2));
+    k.scene.add(c);
+    for (const zc of [Z(4.25), Z(8.75), Z(13.25), Z(17.75)]) {
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 2.4), new THREE.MeshBasicMaterial({ color: 0xf3f7fa, side: THREE.DoubleSide }));
+      p.rotation.set(Math.PI / 2, 0, -s * slope, 'ZXY');
+      p.position.set(s * 2.0, ceilAt(2.0) - 0.03, zc);
+      k.scene.add(p);
+    }
+  }
+  // ---- tan trusses: across the room every 4.5 m, and two long ones down it ----
+  const yB = 4.25;
+  for (const z of [Z(2), Z(6.5), Z(11), Z(15.5), Z(20)]) {
+    k.member(truss, [XL + 0.1, yB, z], [XR - 0.1, yB, z], 0.22, 0.2);
+    for (const s of [-1, 1]) k.member(truss, [s * (XR - 0.1), ceilAt(XR) - 0.15, z], [0, HR - 0.15, z], 0.22, 0.2);
+    const nodes = [-14, -10.5, -7, -3.5, 0, 3.5, 7, 10.5, 14];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const xa = nodes[i], xb = nodes[i + 1];
+      const up = Math.abs(xa) > Math.abs(xb) ? xb : xa, down = up === xa ? xb : xa;
+      k.member(truss, [down, yB, z], [up, ceilAt(up) - 0.18, z], 0.16, 0.16); // diagonal
+      if (Math.abs(up) < 14) k.member(truss, [up, yB, z], [up, ceilAt(up) - 0.18, z], 0.14, 0.14); // vertical
+      k.inst(GEOM.box, plate, xa, yB, z, 0.46, 0.34, 0.24);
+    }
+  }
+  for (const x of [-5.25, 5.25]) {
+    const yT = ceilAt(x) - 0.2;
+    k.member(truss, [x, yB, G0 + 0.1], [x, yB, Z(D) - 0.1], 0.2, 0.2);
+    k.member(truss, [x, yT, G0 + 0.1], [x, yT, Z(D) - 0.1], 0.2, 0.2);
+    for (let z = 0; z < D - 0.1; z += 2.25) k.member(truss, [x, yB, Z(z)], [x, yT, Z(Math.min(D, z + 2.25))], 0.13, 0.13);
+  }
+  // ---- white prismatic-glass pendants on long cords ----
+  for (const x of [-8.8, -2.6, 2.6, 8.8]) for (const z of [Z(4.25), Z(8.75), Z(13.25), Z(17.75)]) {
+    const y = 3.15 + (Math.abs(x) > 5 ? 0.1 : 0.45);
+    k.inst(GEOM.box, 0x1b1b1b, x, (y + ceilAt(x)) / 2, z, 0.015, ceilAt(x) - y, 0.015);
+    k.inst(GEOM.cyl, 0x2a2a2a, x, y + 0.42, z, 0.16, 0.12, 0.16);
+    k.inst(DOME, 0xf2eee3, x, y, z, 0.7, 0.85, 0.7, { basic: true, double: true });
+    k.inst(GEOM.sphere, 0xfffbe8, x, y + 0.08, z, 0.18, 0.18, 0.18, { basic: true });
+  }
+
+  // ---- the stairs down, at the front ----
+  k.box(0x26282c, -2.6, 0, G0 - 0.5, 2.0, 2.6, 0.8);
+  k.panel(new THREE.MeshLambertMaterial({ map: tex(T.text('⬇ The Trough · UE · Mail', { w: 512, h: 72, bg: '#1d2b4a', color: '#f1ece0', font: 'bold 34px system-ui, sans-serif' })) }), -2.6, 2.95, G0 + 0.12, 2.4, 0.34, Math.PI).scale.x = -1;
+
+  // ---- the curved serving counter on the left, its pastry case, the queue ----
+  curvedCounter(k, XL, Z(5), 4.4, -1.25, 1.08, { soffit: 5.0 });
+  {
+    const a = -0.95, x = XL + Math.cos(a) * 4.05, z = Z(5) + Math.sin(a) * 4.05;
+    k.box(0x1b1b1b, x, 0.95, z, 1.0, 0.06, 0.6, { rot: a });
+    k.box(new THREE.MeshLambertMaterial({ color: 0xdcecf2, transparent: true, opacity: 0.4 }), x, 1.01, z, 1.0, 0.55, 0.6, { rot: a });
+    for (let i = 0; i < 6; i++) k.ball(0xd9873a, x + (i % 3 - 1) * 0.25, 1.12 + Math.floor(i / 3) * 0.22, z + (Math.floor(i / 3) - 0.5) * 0.12, 0.08, true);
+  }
+  for (let a = -0.6; a < 1.0; a += 0.32) {
+    const x = XL + Math.cos(a) * 3.95, z = Z(5) + Math.sin(a) * 3.95;
+    k.inst(GEOM.box, [0xc9372c, 0xe8b923, 0x3f8f4a, 0xd9a066, 0xf1ece0][Math.round(a * 10 + 6) % 5], x, 1.0, z, 0.35, 0.08, 0.45, { ry: -a });
+  }
+  k.box(0xc4c7ca, XL + 0.45, 0, Z(5), 0.7, 0.92, 7.2); // back counter, urns on it
+  for (const z of [Z(2.6), Z(3.4), Z(6.8)]) k.cyl(0xb9bcbf, XL + 0.45, 0.92, z, 0.18, 0.55);
+  for (const [z, look] of [[Z(3.6), { skin: 0xc68863, hair: 0x111111, shirt: 0x1b1b1b, pants: 0x1c1c1c }], [Z(6.4), { skin: 0xf1c9a5, hair: 0x7b5230, shirt: 0x1b1b1b, pants: 0x1c1c1c, longHair: true }]]) k.person(XL + 1.6, z, Math.PI / 2, { look });
+  // stanchions with black belts marking the queue to the counter
+  const posts = [[-8.0, Z(1.3)], [-8.0, Z(3.0)], [-8.0, Z(4.7)], [-8.0, Z(6.4)], [-9.4, Z(6.4)], [-9.4, Z(4.7)], [-9.4, Z(3.0)]];
+  for (let i = 0; i < posts.length; i++) {
+    const [x, z] = posts[i];
+    k.inst(GEOM.cyl, 0x1b1b1b, x, 0.47, z, 0.06, 0.94, 0.06);
+    k.inst(GEOM.cyl, 0x1b1b1b, x, 0.015, z, 0.34, 0.03, 0.34);
+    k.inst(GEOM.cyl, 0x2b2b2b, x, 0.96, z, 0.09, 0.06, 0.09);
+    const nxt = posts[i + 1];
+    if (nxt && !(i === 3)) {
+      k.member(0x111111, [x, 0.88, z], [nxt[0], 0.88, nxt[1]], 0.05, 0.012);
+      k.solid(Math.min(x, nxt[0]) - 0.06, Math.min(z, nxt[1]) - 0.06, Math.max(x, nxt[0]) + 0.06, Math.max(z, nxt[1]) + 0.06);
+    }
+  }
+  k.person(-8.7, Z(5.6), Math.PI * 0.9); k.person(-8.7, Z(3.9), Math.PI * 0.95);
+
+  // ---- the open kitchen at the back ----
+  {
+    const zl = Z(18.3);
+    for (const [x0, x1] of [[-9.0, -3.4], [1.4, 9.0]]) {
+      const cx = (x0 + x1) / 2, w = x1 - x0;
+      k.box(0x7a3a22, cx, 0, zl, w, 0.92, 0.85, { solid: true });
+      k.box(0xc4c7ca, cx, 0.92, zl, w + 0.05, 0.05, 0.9);
+      k.box(new THREE.MeshLambertMaterial({ color: 0xd6ecf2, transparent: true, opacity: 0.35 }), cx, 1.05, zl - 0.25, w, 0.45, 0.03);
+      k.box(0xc4c7ca, cx, 1.5, zl - 0.05, w, 0.03, 0.5);
+      for (let x = x0 + 0.5; x < x1 - 0.2; x += 0.65) k.box([0xc9372c, 0xe8b923, 0x3f8f4a, 0xd9a066, 0xf1ece0, 0x8a4a26][Math.round(x * 3 + 30) % 6], x, 0.97, zl + 0.1, 0.5, 0.07, 0.4);
+    }
+    // the round cherry station in front of the hood
+    const sx = -1.0, sz = Z(17.6);
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.95, 28, 1, true, 0.6, Math.PI * 2 - 1.2), mat(0x7a3a22, { side: THREE.DoubleSide }));
+    st.position.set(sx, 0.475, sz); st.rotation.y = Math.PI; k.scene.add(st);
+    const stTop = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.5, 28, 1, -Math.PI / 2 + 0.6, Math.PI * 2 - 1.2), mat(0xc4c7ca, { side: THREE.DoubleSide }));
+    stTop.rotation.x = Math.PI / 2; stTop.rotation.z = 0; stTop.position.set(sx, 0.96, sz); k.scene.add(stTop);
+    k.solid(sx - 1.4, sz - 1.4, sx + 1.4, sz + 0.4);
+    k.person(sx, sz + 0.6, Math.PI, { look: { skin: 0x8d5a3b, hair: 0x111111, shirt: 0x1b1b1b, pants: 0x1c1c1c } });
+    // the line behind: ranges, the flat-top, the stainless hood over it all
+    k.box(0xc4c7ca, 0, 0, Z(21.3), 18, 0.9, 1.0, { solid: true });
+    for (let x = -8; x <= 8; x += 2) k.box(x % 4 === 0 ? 0x2a2a2a : 0x8f9396, x, 0.9, Z(21.3), 1.7, 0.06, 0.8);
+    k.box(0xb9bcbf, -0.5, 2.9, Z(21.0), 10, 0.9, 1.8);
+    k.box(0xa9adb0, -0.5, 3.8, Z(21.6), 1.2, HR - 3.8, 0.8);
+    k.panel(new THREE.MeshLambertMaterial({ map: tex(T.tiles('#f2f1ec', '#d8d6cf', 8, 0.01), [6, 1]) }), 0, 1.6, Z(D) - 0.11, 27.6, 2.2, Math.PI);
+    for (const [x, sh] of [[-6.2, 0xf1c9a5], [4.2, 0xc68863], [6.8, 0xe0ac84]]) k.person(x, Z(19.2), Math.PI, { look: { skin: sh, hair: 0x2b1d12, shirt: 0x1b1b1b, pants: 0x1c1c1c } });
+  }
+
+  // ---- the salad island under the curved soffit on the right ----
+  curvedCounter(k, XR, Z(11.2), 4.2, Math.PI * 0.62, Math.PI * 1.38, { front: 0x7a3a22, band: 0x8a4a2e, soffit: 4.8, lamps: 0xf6efe0 });
+  for (let a = Math.PI * 0.68; a < Math.PI * 1.34; a += 0.2) {
+    const x = XR + Math.cos(a) * 3.8, z = Z(11.2) + Math.sin(a) * 3.8;
+    k.inst(GEOM.box, [0x3f8f4a, 0x6fae4a, 0xc9372c, 0xe8b923, 0xf1ece0][Math.round(a * 5) % 5], x, 1.0, z, 0.4, 0.09, 0.45, { ry: -a });
+  }
+  k.person(XR - 1.2, Z(11.2), -Math.PI / 2, { look: { skin: 0xe0ac84, hair: 0x4a2f1b, shirt: 0x1b1b1b, pants: 0x1c1c1c, longHair: true } });
+  // dish return through the right wall, bins beside it
+  k.box(0xc4c7ca, XR - 0.35, 0.95, Z(19.5), 0.7, 0.06, 2.2);
+  k.panel(new THREE.MeshBasicMaterial({ color: 0x3a3d40 }), XR + 0.05, 1.6, Z(19.5), 2.2, 1.3, Math.PI / 2);
+  k.panel(new THREE.MeshLambertMaterial({ map: tex(T.text('DISH RETURN', { w: 512, h: 80, bg: '#1d2b4a', color: '#f1ece0', font: 'bold 44px system-ui, sans-serif' })) }), XR - 0.12, 2.95, Z(19.5), 1.8, 0.28, Math.PI / 2).scale.x = -1;
+  for (const [z, c] of [[Z(17.3), 0x5a5e63], [Z(16.6), 0x2b5d9a]]) k.box(c, XR - 0.45, 0, z, 0.55, 1.0, 0.55, { solid: true });
+
+  // ---- dining: rows of white tables and bentwood chairs ----
+  for (const x of [-4.6, -0.6, 3.4, 7.2]) for (const z of [3.0, 5.9, 8.8, 11.7, 14.4]) {
+    if (x > 6 && z > 13) continue;
+    grillTable(k, x, Z(z), r, x === -0.6 && z === 8.8 ? 3 : 2, 0.32);
+  }
+  k.person(1.4, Z(1.4), 0.3); k.person(6.4, Z(10.3), -2.4);
+  k.plant(XR - 0.6, Z(1.0), 1.3, 0xf0ede6);
+
+  // ---- the deck, through the French doors ----
+  const DX = -22, DZ0 = Z(4), DZ1 = Z(21);
+  k.floor(new THREE.MeshLambertMaterial({ map: tex(T.planks('#8c8477', 13), [2, 9]) }), DX, DZ0, XL - 0.2, DZ1);
+  k.box(0x4a3426, (DX + XL) / 2, -1.0, DZ1 - 0.12, XL - DX, 1.0, 0.25);
+  k.box(0x4a3426, DX + 0.12, -1.0, (DZ0 + DZ1) / 2, 0.25, 1.0, DZ1 - DZ0);
+  k.box(0xd2bd98, (DX + XL) / 2 - 0.6, -4.6, DZ0 - 0.15, XL - DX + 1.4, 11.5, 0.3); // the building going on past the deck
+  deckRail(k, DX + 0.15, DZ0 + 0.3, DX + 0.15, DZ1 - 0.15);
+  deckRail(k, DX + 0.15, DZ1 - 0.15, XL - 0.6, DZ1 - 0.15);
+  // stone piers up to the roof beam, pale caps, lanterns
+  for (const z of [DZ0 + 0.55, (DZ0 + DZ1) / 2, DZ1 - 0.5]) {
+    stone(k, DX + 0.5, -4.6, z, 0.9, 4.6 + 3.3, 0.9, Math.round(z));
+    k.box(0xd8ccb2, DX + 0.5, 3.3, z, 1.04, 0.12, 1.04);
+    k.box(0x2b2724, DX + 1.0, 2.5, z, 0.12, 0.36, 0.26); k.box(new THREE.MeshBasicMaterial({ color: 0xffd898 }), DX + 1.06, 2.56, z, 0.04, 0.24, 0.18);
+  }
+  stone(k, DX + 0.45, -4.6, (DZ0 + DZ1) / 2 - 4.2, 0.7, 4.6 + 1.2, 0.7, 9); // a short one past the rail
+  k.box(0xd8ccb2, DX + 0.45, 1.2, (DZ0 + DZ1) / 2 - 4.2, 0.84, 0.1, 0.84);
+  // timber roof: beam on the piers, joists back to the wall, plank ceiling, knee braces
+  k.box(0x4a3426, DX + 0.5, 3.42, (DZ0 + DZ1) / 2, 0.45, 0.6, DZ1 - DZ0 + 0.6);
+  for (let z = DZ0 + 0.3; z < DZ1; z += 1.4) k.box(0x4a3426, (DX + XL) / 2, 4.02, z, XL - DX + 0.8, 0.26, 0.16);
+  k.ceiling(new THREE.MeshLambertMaterial({ map: tex(T.planks('#5b4232', 21), [3, 6]), side: THREE.DoubleSide }), DX - 0.6, DZ0, XL, DZ1 + 0.6, 4.3);
+  for (const z of [DZ0 + 0.55, (DZ0 + DZ1) / 2, DZ1 - 0.5]) for (const s of [-1, 1]) {
+    if ((z === DZ0 + 0.55 && s < 0) || (z === DZ1 - 0.5 && s > 0)) continue;
+    k.member(0x4a3426, [DX + 0.5, 2.5, z + s * 0.45], [DX + 0.5, 3.15, z + s * 1.5], 0.16, 0.18);
+  }
+  // black lantern posts at the rail
+  for (const z of [Z(8.6), Z(16.6)]) {
+    k.inst(GEOM.box, 0x161616, DX + 0.15, 1.4, z, 0.09, 2.8, 0.09);
+    k.inst(GEOM.box, 0x161616, DX + 0.15, 2.85, z, 0.3, 0.42, 0.3);
+    k.inst(GEOM.box, 0xffe2a8, DX + 0.15, 2.85, z, 0.22, 0.3, 0.22, { basic: true });
+    k.inst(GEOM.cone4, 0x161616, DX + 0.15, 3.15, z, 0.4, 0.2, 0.4, { ry: Math.PI / 4 });
+  }
+  // slatted tables, ladder-back chairs, patio heaters among them
+  for (const [x, z, round] of [[-18.0, Z(6.6), false], [-20.0, Z(13.0), false], [-17.6, Z(15.6), true], [-20.0, Z(18.6), false], [-16.4, Z(19.2), true]]) deckTable(k, x, z, Math.PI / 2, r, round);
+  for (const [x, z] of [[-20.4, Z(9.6)], [-16.2, Z(12.9)], [-15.4, Z(5.2)], [-18.4, Z(17.4)]]) heater(k, x, z);
+  deckView(k, -70, Z(-36), Z(60), 0);
+
+  return {
+    rooms: [[XL, G0, XR, Z(D), HR - 0.3], [DX, DZ0, XL, DZ1, 4.1]],
+    arrive: [-2.6, Z(1.6), 0],
+    portal: { x: -2.6, z: G0 + 0.5, r: 1.1 },
+    spots: [
+      { x: -1.0, z: Z(15.6), r: 2.4, text: '🍽️ Grab a plate at the <b>Mustang Grill</b>', fn: (game) => { game.player.joy = 100; game.audio.pickup(); game.toast(['🍽️ Taco Tuesday. On a Thursday. You do not ask questions. Joy restored.', '🍔 A burger off the flat-top, fries on the side. Joy restored.', '🥧 There is apple pie today! Joy restored.', '🍽️ The chicken strips. Again. Perfect. Joy restored.'][Math.floor(Math.random() * 4)]); } },
+      { x: -8.8, z: Z(7.6), r: 1.5, text: '🥐 Grab something from the <b>pastry case</b>', fn: (game) => { game.player.joy = Math.min(100, game.player.joy + 30); game.audio.pickup(); game.toast(['🥐 A warm croissant. Joy +30.', '🍪 A chocolate chip cookie the size of your hand. Joy +30.', '🧁 A muffin with the crunchy top. Joy +30.'][Math.floor(Math.random() * 3)]); } },
+      { x: 8.6, z: Z(11.2), r: 1.6, text: '🥗 Build a salad', fn: (game) => { game.player.joy = Math.min(100, game.player.joy + 30); game.audio.pickup(); game.toast(['🥗 Spinach, chickpeas, too many croutons. Balanced. Joy +30.', '🥗 You make a salad. Then you go get pizza too. Joy +30.'][Math.floor(Math.random() * 2)]); } },
+      { x: XL + 2.0, z: Z(13.9), r: 1.4, text: '🔥 Warm up by the fireplace', fn: (game) => { game.player.joy = 100; game.audio.pickup(); game.toast(['🔥 You sink into the leather chair by the fire. Joy restored.', '🔥 Someone is reading Psalms by the fire. You listen a while. Joy restored.'][Math.floor(Math.random() * 2)]); } },
+      { x: XR - 1.4, z: Z(19.5), r: 1.4, text: '🍽️ Bus your tray', fn: (game, it) => {
+        if (it.trayT && game.t - it.trayT < 60) { game.toast('🍽️ Your tray is already back. Nice.'); return; }
+        it.trayT = game.t; game.addCredits(2); game.audio.pickup();
+        game.toast(['🍽️ You bus your tray, and the one someone left behind. +2 Chapel Credits', '🍽️ Tray returned, napkin in the trash, chair pushed in. +2 Chapel Credits'][Math.floor(Math.random() * 2)]);
+      } },
+      { x: DX + 1.3, z: Z(11.0), r: 1.6, text: '🌄 Take in the view over Placerita Canyon', fn: (game) => { game.player.joy = 100; game.audio.pickup(); game.toast(['🌄 The hills go gold in the late sun. The power lines hum. Joy restored.', '🌄 The breeze comes up the canyon through the oaks. Joy restored.', '🌄 You can see the cross on the hill from here. Joy restored.'][Math.floor(Math.random() * 3)]); } },
+      { x: -20.4, z: Z(9.6), r: 1.3, text: '🔥 Stand by the patio heater', fn: (game) => { game.player.joy = Math.min(100, game.player.joy + 40); game.toast('🔥 The heater ticks and glows. Your hands thaw. Joy +40.'); } },
+    ],
+  };
 }
 
 // ---------- the interiors ----------
@@ -821,53 +1300,16 @@ Object.assign(INTERIORS, {
       for (let i = 0; i < 5; i++) k.box(0x8a8a86, -11.4, i * 0.18, 12.1, 1.0, 0.18, 1.6 - i * 0.3); // bottom of the stairs
       k.solid(-12, 11.3, -10.9, 13.2);
 
-      // ---- the Mustang Grill, upstairs (its own floor, at z 20..36) ----
-      const G0 = 20, GH = 5.6;
-      k.floor(new THREE.MeshLambertMaterial({ map: tex(T.carpetTiles('#3a3f47'), [6, 4]) }), -12, G0, 12, G0 + 16);
-      k.floor(new THREE.MeshLambertMaterial({ map: tex(T.tiles('#d9cfbf', '#bdb2a2', 4, 0.05), [5, 1.5]) }), -12, G0 + 12, 12, G0 + 16, 0.005);
-      k.ceiling(mat(0x2a2c30), -12, G0, 12, G0 + 16, GH);
-      k.wall(white, -12, G0, 12, G0, GH);
-      k.wall(white, -12, G0 + 16, 12, G0 + 16, GH);
-      k.wall(white, -12, G0, -12, G0 + 16, GH);
-      k.wall(0xe8e4da, 12, G0, 12, G0 + 16, GH);
-      for (const z of [G0 + 2.5, G0 + 7, G0 + 11.5]) k.window(11.88, 0.3, z, 3.6, 3.2, -Math.PI / 2, 0x2a2a2a, 3);
-      // timber trusses and skylights
-      for (let x = -10; x <= 10; x += 4) {
-        k.box(0xb07a44, x, GH - 1.6, G0 + 8, 0.3, 0.35, 16);
-        for (let z = G0 + 1; z < G0 + 16; z += 2.5) { const d = k.box(0xb07a44, x, GH - 1.3, z, 0.2, 0.2, 2.6); d.rotation.x = (z % 5 > 2 ? 1 : -1) * 0.5; }
-        k.box(0xb07a44, x, GH - 0.3, G0 + 8, 0.3, 0.3, 16);
-        k.lightPanel(x + 2, G0 + 8, GH, 1.6, 3);
-        for (const z of [G0 + 3, G0 + 8, G0 + 13]) k.pendant(x + 2, z, GH, 2.0, 0xf4f1ea, 0xfffaf0);
-      }
-      // serving stations with sneeze guards along the back; the salad bar island
-      k.box(0xc98a4a, -2, 0, G0 + 15.3, 18, 0.95, 0.9, { solid: true });
-      k.box(0xb8bcc0, -2, 0.95, G0 + 15.3, 18, 0.05, 0.95);
-      k.box(0xdcebf0, -2, 1.3, G0 + 14.95, 18, 0.04, 0.3);
-      for (let x = -10; x < 7; x += 1.4) k.box([0xc9372c, 0xe8b923, 0x3f8f4a, 0xd9a066, 0xf1ece0][Math.round(x + 10) % 5], x, 1.0, G0 + 15.35, 1.0, 0.1, 0.5);
-      k.box(0xc98a4a, -2, 0, G0 + 12.3, 5, 0.9, 1.2, { solid: true });
-      k.box(0x3f8f4a, -2, 0.9, G0 + 12.3, 4.6, 0.1, 0.9);
-      for (const x of [-8, -4, 0, 4]) k.person(x, G0 + 14.5, Math.PI, { look: { skin: [0xc68863, 0xf1c9a5, 0x8d5a3b, 0xe0ac84][(x + 8) / 4], hair: 0x111111, shirt: 0x1b1b1b, pants: 0x1c1c1c } });
-      // dining tables in rows, students eating
-      const r = rng(17);
-      for (let x = -9.5; x <= 8.5; x += 3.2) for (const z of [G0 + 3, G0 + 6.5, G0 + 10]) {
-        if (x < -8 && z < G0 + 4) continue;
-        k.table(0x9a6b42, x, z, 2.0, 0.9, { legs: 0x2a2a2a });
-        for (const dx of [-0.55, 0.55]) for (const side of [-1, 1]) {
-          k.chair(0x6b4a2e, x + dx, z + side * 0.72, side > 0 ? Math.PI : 0);
-          if (r() < 0.35) k.person(x + dx, z + side * 0.72, side > 0 ? Math.PI : 0, { sit: 0.47 });
-        }
-        if (r() < 0.6) k.box(0xf1ece0, x - 0.3, 0.76, z, 0.3, 0.03, 0.3);
-      }
-      k.panel(new THREE.MeshLambertMaterial({ map: tex(T.text(['MUSTANG GRILL'], { w: 512, h: 96, color: '#1d2b4a', font: 'bold 64px Georgia, serif' })), transparent: true }), -2, 3.1, G0 + 15.88, 5, 0.9, 0);
-      for (let i = 0; i < 5; i++) k.box(0x8a8a86, -11.4, 0, G0 + 1.2 + i * 0.01, 1.0, 1.0 - i * 0.2, 1.6); // top of the stairs
-      k.solid(-12, G0, -10.9, G0 + 2.0);
+      // ---- the Mustang Grill, upstairs (its own floor, from z = G0 on) ----
+      const G0 = 24;
+      const grill = mustangGrill(k, G0);
       return {
         spawn: [-5, 1.8, 0],
-        rooms: [[-12, 0, 1, 11, H], [1, 0, 12, 11, H], [-12, 11, 1, 13.2, 3.0], [-12, G0, 12, G0 + 16, GH]],
+        rooms: [[-12, 0, 1, 11, H], [1, 0, 12, 11, H], [-12, 11, 1, 13.2, 3.0], ...grill.rooms],
         exits: [[-5, 0.6]],
         portals: [
-          { x: -10.2, z: 12.1, r: 1.3, text: '⬆ Upstairs to the <b>Mustang Grill</b>', to: [-9.8, G0 + 2.6, 0.6] },
-          { x: -10.2, z: G0 + 1.2, r: 1.4, text: '⬇ Downstairs to <b>The Trough</b>', to: [-9.6, 12.1, Math.PI / 2] },
+          { x: -10.2, z: 12.1, r: 1.3, text: '⬆ Upstairs to the <b>Mustang Grill</b>', to: grill.arrive },
+          { ...grill.portal, text: '⬇ Downstairs to <b>The Trough</b>', to: [-9.6, 12.1, Math.PI / 2] },
         ],
         spots: [
           { x: -2.6, z: 6.5, r: 1.4, text: '🍫 Buy a snack at <b>The Trough</b> (3 Chapel Credits)', fn: (game) => {
@@ -883,7 +1325,7 @@ Object.assign(INTERIORS, {
             game.addCredits(n); game.audio.pickup();
             game.toast([`📬 A card from Grandma with a Bible verse and a little cash. +${n} Chapel Credits`, `📬 A care package from your home church! +${n} Chapel Credits`, `📬 A letter from your sponsor kid. You get a little teary. +${n} Chapel Credits`][Math.floor(Math.random() * 3)]);
           } },
-          { x: -2, z: G0 + 13.6, r: 2.2, text: '🍽️ Grab a plate at the <b>Mustang Grill</b>', fn: (game) => { game.player.joy = 100; game.audio.pickup(); game.toast(['🍽️ Taco Tuesday. On a Thursday. You do not ask questions. Joy restored.', '🍽️ The chicken strips. Again. Perfect. Joy restored.', '🥧 There is apple pie today! Joy restored.'][Math.floor(Math.random() * 3)]); } },
+          ...grill.spots,
         ],
         light: 0xfff6e8,
       };
@@ -1151,6 +1593,7 @@ export class Interior {
     const k = new Kit(scene);
     this.kit = k;
     const info = this.def.build(k, this.game);
+    k.flush();
     this.info = info;
     scene.add(new THREE.HemisphereLight(info.light || 0xffffff, 0x8a7a6a, 2.3));
     const sun = new THREE.DirectionalLight(0xffffff, 0.9);
